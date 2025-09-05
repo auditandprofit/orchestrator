@@ -1,6 +1,13 @@
 import subprocess
 import time
+import warnings
 from typing import Optional
+
+# Suppress urllib3 warning about unsupported SSL implementations
+warnings.filterwarnings(
+    "ignore",
+    message="urllib3 v2 only supports OpenSSL",
+)
 
 from openai import (
     APIConnectionError,

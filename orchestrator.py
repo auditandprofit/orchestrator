@@ -51,7 +51,10 @@ def _generate_flow_configs(
     base_config: List[Dict[str, Any]],
     key_files: Dict[str, Path],
 ) -> List[List[Dict[str, Any]]]:
-    """Expand a base configuration into multiple flows via placeholder files."""
+    """Expand a base configuration into multiple flows via placeholder files.
+
+    Placeholders in prompts must be wrapped with triple braces, e.g. ``{{{name}}}``.
+    """
 
     if not key_files:
         return [base_config]
@@ -75,7 +78,8 @@ def _generate_flow_configs(
             new_step = dict(step)
             prompt = new_step.get("prompt", "")
             for key, value in mapping.items():
-                prompt = prompt.replace(f"{{{key}}}", value)
+                placeholder = "{{{" + key + "}}}"
+                prompt = prompt.replace(placeholder, value)
             new_step["prompt"] = prompt
             flow.append(new_step)
         flow_configs.append(flow)
@@ -172,7 +176,7 @@ if __name__ == "__main__":
         "--key",
         action="append",
         default=[],
-        help="Placeholder interpolation in the form name:filelist.txt",
+        help="Placeholder interpolation in the form name:filelist.txt (use {{{name}}} in prompts)",
     )
     args = parser.parse_args()
 

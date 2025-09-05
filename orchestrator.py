@@ -3,7 +3,8 @@ import json
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
+import tempfile
 
 from openai_utils import call_openai_api, run_codex_cli
 
@@ -12,10 +13,16 @@ def _run_flow(
     config: List[Dict[str, Any]],
     step_counts: List[int],
     lock: threading.Lock,
-) -> str:
-    """Execute a single flow defined in config, updating step counts."""
+) -> Tuple[str, Optional[Path]]:
+    """Execute a single flow defined in config, updating step counts.
+
+    Returns a tuple of the final output and the path to the final message file
+    when the last step was a codex invocation. For non-codex final steps, the
+    path is ``None``.
+    """
 
     prev_output = ""
+    prev_path: Optional[Path] = None
 
     for idx, step in enumerate(config):
         step_type = step.get("type")
@@ -28,7 +35,7 @@ def _run_flow(
 
         try:
             if step_type == "codex":
-                prev_output = run_codex_cli(prompt)
+                prev_output, prev_path = run_codex_cli(prompt)
             elif step_type == "openai":
                 response = call_openai_api(prompt)
                 # Responses API returns dict; extract content if possible
@@ -38,13 +45,14 @@ def _run_flow(
                     .get("text", "")
                 )
                 prev_output = output_text
+                prev_path = None
             else:
                 raise ValueError(f"Unknown step type: {step_type}")
         finally:
             with lock:
                 step_counts[idx] -= 1
 
-    return prev_output
+    return prev_output, prev_path
 
 
 def _generate_flow_configs(
@@ -91,21 +99,25 @@ def orchestrate(
     base_config: List[Dict[str, Any]],
     flow_configs: List[List[Dict[str, Any]]],
     parallel: int = 1,
-) -> List[str]:
-    """Execute multiple flows with a concurrency cap while logging active counts."""
+) -> List[Tuple[str, Optional[Path]]]:
+    """Execute multiple flows with a concurrency cap while logging active counts.
+
+    Returns a list of tuples containing each flow's final message and the path to
+    the file holding that message when produced by a codex step.
+    """
 
     step_names = [step.get("type", "") for step in base_config]
     step_counts = [0] * len(base_config)
     step_lock = threading.Lock()
     progress_lock = threading.Lock()
-    results: List[str] = [""] * len(flow_configs)
+    results: List[Tuple[str, Optional[Path]]] = [("", None)] * len(flow_configs)
     finished = 0
     total = len(flow_configs)
 
     def worker(idx: int, flow_conf: List[Dict[str, Any]]):
         nonlocal finished
-        result = _run_flow(flow_conf, step_counts, step_lock)
-        results[idx] = result
+        result, path = _run_flow(flow_conf, step_counts, step_lock)
+        results[idx] = (result, path)
         with progress_lock:
             finished += 1
 
@@ -193,5 +205,20 @@ if __name__ == "__main__":
     flow_configs = _generate_flow_configs(config, key_files)
 
     results = orchestrate(config, flow_configs, parallel=args.parallel)
-    for res in results:
-        print(res)
+    for idx, (res, path) in enumerate(results):
+        if path is None:
+            tmpdir = Path(tempfile.mkdtemp(prefix="codex_run_"))
+            filename = (
+                "final_message.txt" if len(results) == 1 else f"final_message_{idx}.txt"
+            )
+            path = tmpdir / filename
+            path.write_text(res, encoding="utf-8")
+        snippet = (
+            f"This is the final message from the agent. It is stored at '{path}'. "
+            "You can propagate it in code like this:\n\n"
+            f"with open(\"{path}\") as f:\n"
+            "    final_message = f.read()\n"
+            "    print(final_message)\n\n"
+            "The directory has been left intact for logging purposes."
+        )
+        print(snippet)

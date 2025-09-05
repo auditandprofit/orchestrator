@@ -49,5 +49,15 @@ openai: 1 -> codex: 0 -> openai: 1
 indicating one flow is at the first OpenAI step and another is nearing completion
 at the final OpenAI step.
 
-Each step receives the output of the previous step appended to its prompt. The final output is printed to stdout.
+Each step receives the output of the previous step appended to its prompt. When
+the final step is handled by the codex CLI, its concluding message is written to
+a file inside a temporary directory. The script prints the path so downstream
+code can read the message:
+
+```python
+with open("/tmp/codex_exec_xxxx/final_message.txt") as f:
+    final_message = f.read()
+```
+
+The temporary directory is left intact for logging.
 

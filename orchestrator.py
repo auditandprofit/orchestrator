@@ -1,9 +1,10 @@
 import json
-from typing import List, Dict, Any
-
-from openai_utils import run_codex_cli, call_openai_api
 import threading
 import time
+from pathlib import Path
+from typing import Any, Dict, List
+
+from openai_utils import call_openai_api, run_codex_cli
 
 
 def _run_flow(
@@ -45,36 +46,108 @@ def _run_flow(
     return prev_output
 
 
-def orchestrate(config: List[Dict[str, Any]], parallel: int = 1) -> List[str]:
-    """Execute multiple flows in parallel while logging active step counts."""
+def _generate_flow_configs(
+    base_config: List[Dict[str, Any]],
+    key_files: Dict[str, Path],
+) -> List[List[Dict[str, Any]]]:
+    """Expand a base configuration into multiple flows via placeholder files."""
 
-    step_names = [step.get("type", "") for step in config]
-    step_counts = [0] * len(config)
-    lock = threading.Lock()
-    results: List[str] = []
+    if not key_files:
+        return [base_config]
 
-    def flow_wrapper():
-        result = _run_flow(config, step_counts, lock)
-        results.append(result)
+    loaded: Dict[str, List[str]] = {}
+    lengths: List[int] = []
+
+    for key, file_path in key_files.items():
+        with file_path.open("r", encoding="utf-8") as f:
+            paths = [line.strip() for line in f.readlines() if line.strip()]
+        contents = [Path(p).read_text(encoding="utf-8") for p in paths]
+        loaded[key] = contents
+        lengths.append(len(contents))
+
+    if len(set(lengths)) != 1:
+        raise ValueError("All key files must have the same number of lines")
+
+    total = lengths[0] if lengths else 1
+    flow_configs: List[List[Dict[str, Any]]] = []
+
+    for idx in range(total):
+        flow: List[Dict[str, Any]] = []
+        for step in base_config:
+            new_step = dict(step)
+            prompt = new_step.get("prompt", "")
+            for key, values in loaded.items():
+                prompt = prompt.replace(f"{{{key}}}", values[idx])
+            new_step["prompt"] = prompt
+            flow.append(new_step)
+        flow_configs.append(flow)
+
+    return flow_configs
+
+
+def orchestrate(
+    base_config: List[Dict[str, Any]],
+    flow_configs: List[List[Dict[str, Any]]],
+    parallel: int = 1,
+) -> List[str]:
+    """Execute multiple flows with a concurrency cap while logging active counts."""
+
+    step_names = [step.get("type", "") for step in base_config]
+    step_counts = [0] * len(base_config)
+    step_lock = threading.Lock()
+    progress_lock = threading.Lock()
+    results: List[str] = [""] * len(flow_configs)
+    finished = 0
+    total = len(flow_configs)
+
+    def worker(idx: int, flow_conf: List[Dict[str, Any]]):
+        nonlocal finished
+        result = _run_flow(flow_conf, step_counts, step_lock)
+        results[idx] = result
+        with progress_lock:
+            finished += 1
 
     stop_event = threading.Event()
 
     def monitor():
         while not stop_event.is_set():
-            with lock:
+            with step_lock:
                 parts = [f"{name}: {count}" for name, count in zip(step_names, step_counts)]
-            print(" -> ".join(parts), end="\r", flush=True)
+            with progress_lock:
+                prog = f"{finished}/{total}"
+            display = " -> ".join(parts)
+            if display:
+                display += f" | {prog}"
+            else:
+                display = prog
+            print(display, end="\r", flush=True)
             time.sleep(0.5)
-        with lock:
+        with step_lock:
             parts = [f"{name}: {count}" for name, count in zip(step_names, step_counts)]
-        print(" -> ".join(parts))
+        with progress_lock:
+            prog = f"{finished}/{total}"
+        display = " -> ".join(parts)
+        if display:
+            display += f" | {prog}"
+        else:
+            display = prog
+        print(display)
 
-    threads = [threading.Thread(target=flow_wrapper) for _ in range(parallel)]
+    threads: List[threading.Thread] = []
     monitor_thread = threading.Thread(target=monitor)
     monitor_thread.start()
 
-    for t in threads:
-        t.start()
+    for idx, flow_conf in enumerate(flow_configs):
+        while True:
+            with progress_lock:
+                active = len([t for t in threads if t.is_alive()])
+            if active < parallel:
+                t = threading.Thread(target=worker, args=(idx, flow_conf))
+                threads.append(t)
+                t.start()
+                break
+            time.sleep(0.1)
+
     for t in threads:
         t.join()
 
@@ -95,13 +168,28 @@ if __name__ == "__main__":
         "--parallel",
         type=int,
         default=1,
-        help="Number of flows to run in parallel",
+        help="Maximum number of flows to run concurrently",
+    )
+    parser.add_argument(
+        "--key",
+        action="append",
+        default=[],
+        help="Placeholder interpolation in the form name:filelist.txt",
     )
     args = parser.parse_args()
 
     with open(args.config, "r", encoding="utf-8") as f:
         config = json.load(f)
 
-    results = orchestrate(config, parallel=args.parallel)
+    key_files = {}
+    for item in args.key:
+        if ":" not in item:
+            raise ValueError("--key expects format name:filelist.txt")
+        name, path = item.split(":", 1)
+        key_files[name] = Path(path)
+
+    flow_configs = _generate_flow_configs(config, key_files)
+
+    results = orchestrate(config, flow_configs, parallel=args.parallel)
     for res in results:
         print(res)

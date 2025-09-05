@@ -2,7 +2,12 @@ import subprocess
 import time
 from typing import Optional
 
-import openai
+from openai import (
+    APIConnectionError,
+    APITimeoutError,
+    APIStatusError,
+    OpenAI,
+)
 import requests
 
 
@@ -10,11 +15,13 @@ class CodexTimeoutError(Exception):
     """Custom exception for codex CLI timeouts."""
 
 
+client = OpenAI()
+
 NETWORK_EXCEPTIONS = (
     requests.exceptions.RequestException,
-    openai.error.APIConnectionError,
-    openai.error.Timeout,
-    openai.error.ServiceUnavailableError,
+    APIConnectionError,
+    APITimeoutError,
+    APIStatusError,
 )
 
 
@@ -53,23 +60,23 @@ def run_codex_cli(prompt: str, max_retries: int = 3, timeout: Optional[int] = No
 
 
 def call_openai_api(prompt: str, max_retries: int = 3) -> dict:
-    """Call the OpenAI API with retry logic on network errors.
+    """Call the OpenAI Responses API with retry logic on network errors.
 
     Args:
-        prompt: Prompt string for the completion request.
+        prompt: Prompt string for the response request.
         max_retries: Maximum number of retries on network-related errors.
 
     Returns:
-        The OpenAI API response as a dictionary.
+        The Responses API response as a dictionary.
 
     Raises:
-        openai.error.OpenAIError: If network errors persist after retries.
+        openai.OpenAIError: If network errors persist after retries.
         Exception: Any other exception is raised immediately.
     """
     for attempt in range(max_retries):
         try:
-            response = openai.Completion.create(engine="text-davinci-003", prompt=prompt)
-            return response
+            response = client.responses.create(model="gpt-4o-mini", input=prompt)
+            return response.model_dump()
         except NETWORK_EXCEPTIONS:
             if attempt == max_retries - 1:
                 raise

@@ -19,7 +19,7 @@ NETWORK_EXCEPTIONS = (
 
 
 def run_codex_cli(prompt: str, max_retries: int = 3, timeout: Optional[int] = None) -> str:
-    """Run the OpenAI codex CLI with retry logic on timeouts.
+    """Run the Codex CLI non-interactively with retry logic on timeouts.
 
     Args:
         prompt: The prompt to pass to the codex CLI.
@@ -36,7 +36,7 @@ def run_codex_cli(prompt: str, max_retries: int = 3, timeout: Optional[int] = No
     for attempt in range(max_retries):
         try:
             result = subprocess.run(
-                ["openai", "codex", "--prompt", prompt],
+                ["codex", "exec", prompt],
                 capture_output=True,
                 check=True,
                 text=True,

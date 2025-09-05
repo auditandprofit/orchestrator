@@ -26,8 +26,9 @@ available.
 You can also supply files whose contents are interpolated into the prompts of
 each flow. Each `--key` flag specifies a placeholder and a text file containing
 line-separated file paths. The contents of those files are inserted wherever the
-placeholder appears in the prompt. The number of lines across the referenced
-files determines how many total flows are executed.
+placeholder appears in the prompt. Flows are generated for every combination of
+lines across the supplied files, so the total number of flows equals the
+product of the line counts for each key file.
 
 ```bash
 python orchestrator.py config.json --parallel 10 --key foo:paths.txt

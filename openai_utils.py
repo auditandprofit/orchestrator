@@ -1,7 +1,9 @@
 import subprocess
 import time
 import warnings
-from typing import Optional
+import tempfile
+from pathlib import Path
+from typing import Optional, Tuple
 
 # Suppress urllib3 warning about unsupported SSL implementations
 warnings.filterwarnings(
@@ -32,8 +34,14 @@ NETWORK_EXCEPTIONS = (
 )
 
 
-def run_codex_cli(prompt: str, max_retries: int = 3, timeout: Optional[int] = None) -> str:
-    """Run the Codex CLI non-interactively with retry logic on timeouts.
+def run_codex_cli(
+    prompt: str, max_retries: int = 3, timeout: Optional[int] = None
+) -> Tuple[str, Path]:
+    """Run the Codex CLI and capture its final message via file output.
+
+    The codex CLI supports writing its final message to a file. This helper
+    invokes the CLI with that argument, then reads the file to obtain the
+    message so it can be passed to subsequent steps.
 
     Args:
         prompt: The prompt to pass to the codex CLI.
@@ -41,22 +49,26 @@ def run_codex_cli(prompt: str, max_retries: int = 3, timeout: Optional[int] = No
         timeout: Optional timeout for the subprocess call in seconds.
 
     Returns:
-        The stdout from the codex CLI.
+        A tuple of the final message string and the path to the file where it
+        was stored.
 
     Raises:
         subprocess.TimeoutExpired: If the command times out after all retries.
-        Exception: Any non-timeout exceptions from subprocess.run are raised immediately.
+        Exception: Any non-timeout exceptions from subprocess.run are raised
+        immediately.
     """
     for attempt in range(max_retries):
+        tmpdir = Path(tempfile.mkdtemp(prefix="codex_exec_"))
+        output_path = tmpdir / "final_message.txt"
         try:
-            result = subprocess.run(
-                ["codex", "exec", prompt],
+            subprocess.run(
+                ["codex", "exec", "--output-file", str(output_path), prompt],
                 capture_output=True,
                 check=True,
                 text=True,
                 timeout=timeout,
             )
-            return result.stdout
+            return output_path.read_text(encoding="utf-8"), output_path
         except subprocess.TimeoutExpired:
             if attempt == max_retries - 1:
                 raise

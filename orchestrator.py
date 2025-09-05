@@ -1,3 +1,4 @@
+import itertools
 import json
 import threading
 import time
@@ -56,28 +57,25 @@ def _generate_flow_configs(
         return [base_config]
 
     loaded: Dict[str, List[str]] = {}
-    lengths: List[int] = []
 
     for key, file_path in key_files.items():
         with file_path.open("r", encoding="utf-8") as f:
             paths = [line.strip() for line in f.readlines() if line.strip()]
         contents = [Path(p).read_text(encoding="utf-8") for p in paths]
         loaded[key] = contents
-        lengths.append(len(contents))
 
-    if len(set(lengths)) != 1:
-        raise ValueError("All key files must have the same number of lines")
-
-    total = lengths[0] if lengths else 1
+    keys = list(loaded.keys())
+    values_product = itertools.product(*(loaded[k] for k in keys))
     flow_configs: List[List[Dict[str, Any]]] = []
 
-    for idx in range(total):
+    for combo in values_product:
+        mapping = dict(zip(keys, combo))
         flow: List[Dict[str, Any]] = []
         for step in base_config:
             new_step = dict(step)
             prompt = new_step.get("prompt", "")
-            for key, values in loaded.items():
-                prompt = prompt.replace(f"{{{key}}}", values[idx])
+            for key, value in mapping.items():
+                prompt = prompt.replace(f"{{{key}}}", value)
             new_step["prompt"] = prompt
             flow.append(new_step)
         flow_configs.append(flow)

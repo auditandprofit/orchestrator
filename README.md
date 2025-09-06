@@ -51,13 +51,13 @@ at the final OpenAI step.
 
 Each step receives the output of the previous step appended to its prompt. When
 the final step is handled by the codex CLI, its concluding message is written to
-a file inside a temporary directory. The script prints the path so downstream
-code can read the message:
+a file inside the `generated` directory so it remains available after the run.
+The script prints the path so downstream code can read the message:
 
 ```python
-with open("/tmp/codex_exec_xxxx/final_message.txt") as f:
+with open("generated/codex_exec_xxxx/final_message.txt") as f:
     final_message = f.read()
 ```
 
-The temporary directory is left intact for logging.
+The directory is left intact for logging.
 

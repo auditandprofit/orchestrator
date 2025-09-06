@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import tempfile
 
-from openai_utils import call_openai_api, run_codex_cli
+from openai_utils import GENERATED_DIR, call_openai_api, run_codex_cli
 
 
 def _run_flow(
@@ -207,7 +207,7 @@ if __name__ == "__main__":
     results = orchestrate(config, flow_configs, parallel=args.parallel)
     for idx, (res, path) in enumerate(results):
         if path is None:
-            tmpdir = Path(tempfile.mkdtemp(prefix="codex_run_"))
+            tmpdir = Path(tempfile.mkdtemp(prefix="codex_run_", dir=GENERATED_DIR))
             filename = (
                 "final_message.txt" if len(results) == 1 else f"final_message_{idx}.txt"
             )

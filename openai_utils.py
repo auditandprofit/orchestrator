@@ -11,6 +11,10 @@ warnings.filterwarnings(
     message="urllib3 v2 only supports OpenSSL",
 )
 
+# Directory for preserving Codex outputs
+GENERATED_DIR = Path("generated")
+GENERATED_DIR.mkdir(parents=True, exist_ok=True)
+
 from openai import (
     APIConnectionError,
     APITimeoutError,
@@ -58,7 +62,7 @@ def run_codex_cli(
         immediately.
     """
     for attempt in range(max_retries):
-        tmpdir = Path(tempfile.mkdtemp(prefix="codex_exec_"))
+        tmpdir = Path(tempfile.mkdtemp(prefix="codex_exec_", dir=GENERATED_DIR))
         output_path = tmpdir / "final_message.txt"
         try:
             subprocess.run(

@@ -13,6 +13,7 @@ def _run_flow(
     config: List[Dict[str, Any]],
     step_counts: List[int],
     lock: threading.Lock,
+    workdir: Path,
 ) -> Tuple[str, Optional[Path]]:
     """Execute a single flow defined in config, updating step counts.
 
@@ -35,7 +36,7 @@ def _run_flow(
 
         try:
             if step_type == "codex":
-                prev_output, prev_path = run_codex_cli(prompt)
+                prev_output, prev_path = run_codex_cli(prompt, workdir)
             elif step_type == "openai":
                 response = call_openai_api(prompt)
                 # Responses API returns dict; extract content if possible
@@ -99,6 +100,7 @@ def orchestrate(
     base_config: List[Dict[str, Any]],
     flow_configs: List[List[Dict[str, Any]]],
     parallel: int = 1,
+    workdir: Path = Path("."),
 ) -> List[Tuple[str, Optional[Path]]]:
     """Execute multiple flows with a concurrency cap while logging active counts.
 
@@ -120,7 +122,7 @@ def orchestrate(
 
     def worker(idx: int, flow_conf: List[Dict[str, Any]]):
         nonlocal finished
-        result, path = _run_flow(flow_conf, step_counts, step_lock)
+        result, path = _run_flow(flow_conf, step_counts, step_lock, workdir)
         results[idx] = (result, path)
         with progress_lock:
             finished += 1
@@ -194,6 +196,11 @@ if __name__ == "__main__":
         default=[],
         help="Placeholder interpolation in the form name:filelist.txt (use {{{name}}} in prompts)",
     )
+    parser.add_argument(
+        "--workdir",
+        required=True,
+        help="Directory to run codex commands from",
+    )
     args = parser.parse_args()
 
     with open(args.config, "r", encoding="utf-8") as f:
@@ -208,7 +215,12 @@ if __name__ == "__main__":
 
     flow_configs = _generate_flow_configs(config, key_files)
 
-    results = orchestrate(config, flow_configs, parallel=args.parallel)
+    results = orchestrate(
+        config,
+        flow_configs,
+        parallel=args.parallel,
+        workdir=Path(args.workdir),
+    )
     for idx, (res, path) in enumerate(results):
         if path is None:
             tmpdir = Path(tempfile.mkdtemp(prefix="codex_run_", dir=GENERATED_DIR))

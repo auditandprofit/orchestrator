@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import tempfile
 import traceback
 
-from openai_utils import GENERATED_DIR, ERROR_DIR, call_openai_api, run_codex_cli
+from openai_utils import GENERATED_DIR, call_openai_api, run_codex_cli
 
 
 def _run_flow(
@@ -15,12 +15,14 @@ def _run_flow(
     step_counts: List[int],
     lock: threading.Lock,
     workdir: Path,
+    flow_dir: Path,
 ) -> Tuple[str, Optional[Path]]:
     """Execute a single flow defined in config, updating step counts.
 
     Returns a tuple of the final output and the path to the final message file
     when the last step was a codex invocation. For non-codex final steps, the
-    path is ``None``.
+    path is ``None``. ``flow_dir`` is the directory where all artifacts for this
+    flow are stored.
     """
 
     prev_output = ""
@@ -38,7 +40,7 @@ def _run_flow(
 
         try:
             if step_type == "codex":
-                prev_output, prev_path = run_codex_cli(prompt, workdir)
+                prev_output, prev_path = run_codex_cli(prompt, workdir, flow_dir)
             elif step_type == "openai":
                 response = call_openai_api(prompt)
                 # Responses API returns dict; extract content if possible
@@ -53,8 +55,10 @@ def _run_flow(
                 raise ValueError(f"Unknown step type: {step_type}")
         except Exception as e:
             if error_dir is None:
+                errors_base = flow_dir / "errors"
+                errors_base.mkdir(parents=True, exist_ok=True)
                 error_dir = Path(
-                    tempfile.mkdtemp(prefix="run_", dir=ERROR_DIR)
+                    tempfile.mkdtemp(prefix="run_", dir=errors_base)
                 )
             error_file = error_dir / f"step_{idx}_{step_type}.txt"
             error_file.write_text(
@@ -124,13 +128,13 @@ def orchestrate(
     flow_configs: List[List[Dict[str, Any]]],
     parallel: int = 1,
     workdir: Path = Path("."),
-) -> List[Tuple[str, Optional[Path]]]:
+) -> List[Tuple[str, Optional[Path], Path]]:
     """Execute multiple flows with a concurrency cap while logging active counts.
 
-    Returns a list of tuples containing each flow's final message and the path to
-    the file holding that message when produced by a codex step. Each step may
-    optionally define a ``name`` field, which is used in the live progress output
-    instead of the underlying step ``type``.
+    Returns a list of tuples containing each flow's final message, the path to
+    the file holding that message when produced by a codex step, and the flow's
+    output directory. Each step may optionally define a ``name`` field, which is
+    used in the live progress output instead of the underlying step ``type``.
     """
 
     # Prefer a user-defined name for each step when displaying progress; fall back
@@ -139,14 +143,16 @@ def orchestrate(
     step_counts = [0] * len(base_config)
     step_lock = threading.Lock()
     progress_lock = threading.Lock()
-    results: List[Tuple[str, Optional[Path]]] = [("", None)] * len(flow_configs)
+    results: List[Tuple[str, Optional[Path], Path]] = [
+        ("", None, Path())
+    ] * len(flow_configs)
     finished = 0
     total = len(flow_configs)
 
-    def worker(idx: int, flow_conf: List[Dict[str, Any]]):
+    def worker(idx: int, flow_conf: List[Dict[str, Any]], flow_dir: Path):
         nonlocal finished
-        result, path = _run_flow(flow_conf, step_counts, step_lock, workdir)
-        results[idx] = (result, path)
+        result, path = _run_flow(flow_conf, step_counts, step_lock, workdir, flow_dir)
+        results[idx] = (result, path, flow_dir)
         with progress_lock:
             finished += 1
 
@@ -181,11 +187,12 @@ def orchestrate(
     monitor_thread.start()
 
     for idx, flow_conf in enumerate(flow_configs):
+        flow_dir = Path(tempfile.mkdtemp(prefix="flow_", dir=GENERATED_DIR))
         while True:
             with progress_lock:
                 active = len([t for t in threads if t.is_alive()])
             if active < parallel:
-                t = threading.Thread(target=worker, args=(idx, flow_conf))
+                t = threading.Thread(target=worker, args=(idx, flow_conf, flow_dir))
                 threads.append(t)
                 t.start()
                 break
@@ -251,12 +258,11 @@ if __name__ == "__main__":
         parallel=args.parallel,
         workdir=Path(args.workdir),
     )
-    for idx, (res, path) in enumerate(results):
+    for idx, (res, path, flow_dir) in enumerate(results):
         if path is None:
-            tmpdir = Path(tempfile.mkdtemp(prefix="codex_run_", dir=GENERATED_DIR))
             filename = (
                 "final_message.txt" if len(results) == 1 else f"final_message_{idx}.txt"
             )
-            path = tmpdir / filename
+            path = flow_dir / filename
             path.write_text(res, encoding="utf-8")
         print(path)

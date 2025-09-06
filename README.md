@@ -53,15 +53,17 @@ draft: 1 -> codex: 0 -> summary: 1
 indicating one flow is at the first step and another is nearing completion at
 the final step.
 
-Each step receives the output of the previous step appended to its prompt. When
-the final step is handled by the codex CLI, its concluding message is written to
-a file inside the `generated` directory so it remains available after the run.
-The script prints the path so downstream code can read the message:
+Each step receives the output of the previous step appended to its prompt. Each
+flow has its own directory inside `generated`, and Codex invocations create
+subdirectories within that flow. When the final step is handled by the codex
+CLI, its concluding message is written to a file in the flow's directory so it
+remains available after the run. The script prints the path so downstream code
+can read the message:
 
 ```python
-with open("generated/codex_exec_xxxx/final_message.txt") as f:
+with open("generated/flow_xxxx/codex_exec_xxxx/final_message.txt") as f:
     final_message = f.read()
 ```
 
-The directory is left intact for logging.
+Each flow directory is left intact for logging.
 

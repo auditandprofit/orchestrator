@@ -39,7 +39,10 @@ NETWORK_EXCEPTIONS = (
 
 
 def run_codex_cli(
-    prompt: str, max_retries: int = 3, timeout: Optional[int] = None
+    prompt: str,
+    workdir: Path,
+    max_retries: int = 3,
+    timeout: Optional[int] = None,
 ) -> Tuple[str, Path]:
     """Run the Codex CLI and capture its final message via file output.
 
@@ -49,6 +52,7 @@ def run_codex_cli(
 
     Args:
         prompt: The prompt to pass to the codex CLI.
+        workdir: Directory to run the codex command from.
         max_retries: Maximum number of retries when a timeout occurs.
         timeout: Optional timeout for the subprocess call in seconds.
 
@@ -66,7 +70,16 @@ def run_codex_cli(
         output_path = tmpdir / "final_message.txt"
         try:
             subprocess.run(
-                ["codex", "exec", "--output-file", str(output_path), prompt],
+                [
+                    "codex",
+                    "exec",
+                    "--skip-git-repo-check",
+                    "-C",
+                    str(workdir),
+                    "--output-file",
+                    str(output_path),
+                    prompt,
+                ],
                 capture_output=True,
                 check=True,
                 text=True,

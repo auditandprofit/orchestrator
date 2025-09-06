@@ -90,6 +90,10 @@ def run_codex_cli(
             if attempt == max_retries - 1:
                 raise
             time.sleep(1)
+        except subprocess.CalledProcessError as e:
+            # Surface stderr from the Codex CLI when execution fails.
+            print(e.stderr)
+            raise
         except Exception:
             # Any non-timeout exception should fail fast.
             raise

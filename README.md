@@ -4,12 +4,14 @@ A simple configurable orchestration system that chains Codex and OpenAI model ca
 
 ## Usage
 
-Create a JSON configuration describing each step. Each item requires a `type` (`"codex"` or `"openai"`) and a `prompt`.
+Create a JSON configuration describing each step. Each item requires a `type`
+(`"codex"` or `"openai"`) and a `prompt`. You can optionally supply a
+`name` to use in the live progress output instead of the step type.
 
 ```json
 [
-  {"type": "openai", "prompt": "Write a limerick about orchestration."},
-  {"type": "openai", "prompt": "Summarize the previous output."}
+  {"type": "openai", "name": "draft", "prompt": "Write a limerick about orchestration."},
+  {"type": "openai", "name": "summary", "prompt": "Summarize the previous output."}
 ]
 ```
 
@@ -39,15 +41,16 @@ Any prompt containing `{{{foo}}}` will have that placeholder replaced with the
 contents of each file listed in `paths.txt`.
 
 While running, the orchestrator logs a live view of the number of active flows at
-each step, along with overall progress `finished/total`. For a configuration such
-as `openai -> codex -> openai`, the log might look like:
+each step, along with overall progress `finished/total`. If a step includes a
+`name`, that value appears in the log instead of the step's `type`. For a
+configuration such as `draft -> codex -> summary`, the log might look like:
 
 ```
-openai: 1 -> codex: 0 -> openai: 1
+draft: 1 -> codex: 0 -> summary: 1
 ```
 
-indicating one flow is at the first OpenAI step and another is nearing completion
-at the final OpenAI step.
+indicating one flow is at the first step and another is nearing completion at
+the final step.
 
 Each step receives the output of the previous step appended to its prompt. When
 the final step is handled by the codex CLI, its concluding message is written to

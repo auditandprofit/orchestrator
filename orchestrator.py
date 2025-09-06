@@ -103,10 +103,14 @@ def orchestrate(
     """Execute multiple flows with a concurrency cap while logging active counts.
 
     Returns a list of tuples containing each flow's final message and the path to
-    the file holding that message when produced by a codex step.
+    the file holding that message when produced by a codex step. Each step may
+    optionally define a ``name`` field, which is used in the live progress output
+    instead of the underlying step ``type``.
     """
 
-    step_names = [step.get("type", "") for step in base_config]
+    # Prefer a user-defined name for each step when displaying progress; fall back
+    # to the step's type (e.g. "codex" or "openai") if no custom name is given.
+    step_names = [step.get("name") or step.get("type", "") for step in base_config]
     step_counts = [0] * len(base_config)
     step_lock = threading.Lock()
     progress_lock = threading.Lock()

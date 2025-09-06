@@ -59,10 +59,13 @@ def _run_flow(
 def _generate_flow_configs(
     base_config: List[Dict[str, Any]],
     key_files: Dict[str, Path],
+    append_filepath: bool = False,
 ) -> List[List[Dict[str, Any]]]:
     """Expand a base configuration into multiple flows via placeholder files.
 
     Placeholders in prompts must be wrapped with triple braces, e.g. ``{{{name}}}``.
+    When ``append_filepath`` is ``True``, the path to each interpolated file is
+    appended after its contents in the prompt.
     """
 
     if not key_files:
@@ -73,7 +76,12 @@ def _generate_flow_configs(
     for key, file_path in key_files.items():
         with file_path.open("r", encoding="utf-8") as f:
             paths = [line.strip() for line in f.readlines() if line.strip()]
-        contents = [Path(p).read_text(encoding="utf-8") for p in paths]
+        contents: List[str] = []
+        for p in paths:
+            text = Path(p).read_text(encoding="utf-8")
+            if append_filepath:
+                text = text.rstrip("\n") + f"\n{p}"
+            contents.append(text)
         loaded[key] = contents
 
     keys = list(loaded.keys())
@@ -197,6 +205,11 @@ if __name__ == "__main__":
         help="Placeholder interpolation in the form name:filelist.txt (use {{{name}}} in prompts)",
     )
     parser.add_argument(
+        "--append-filepath",
+        action="store_true",
+        help="Append source file path after interpolated content",
+    )
+    parser.add_argument(
         "--workdir",
         required=True,
         help="Directory to run codex commands from",
@@ -213,7 +226,9 @@ if __name__ == "__main__":
         name, path = item.split(":", 1)
         key_files[name] = Path(path)
 
-    flow_configs = _generate_flow_configs(config, key_files)
+    flow_configs = _generate_flow_configs(
+        config, key_files, append_filepath=args.append_filepath
+    )
 
     results = orchestrate(
         config,

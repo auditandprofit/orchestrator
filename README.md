@@ -38,7 +38,8 @@ python orchestrator.py config.json --parallel 10 --key foo:paths.txt
 ```
 
 Any prompt containing `{{{foo}}}` will have that placeholder replaced with the
-contents of each file listed in `paths.txt`.
+contents of each file listed in `paths.txt`. Use `--append-filepath` to append
+the path of each interpolated file after its contents in the prompt.
 
 While running, the orchestrator logs a live view of the number of active flows at
 each step, along with overall progress `finished/total`. If a step includes a

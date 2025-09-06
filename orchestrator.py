@@ -229,12 +229,4 @@ if __name__ == "__main__":
             )
             path = tmpdir / filename
             path.write_text(res, encoding="utf-8")
-        snippet = (
-            f"This is the final message from the agent. It is stored at '{path}'. "
-            "You can propagate it in code like this:\n\n"
-            f"with open(\"{path}\") as f:\n"
-            "    final_message = f.read()\n"
-            "    print(final_message)\n\n"
-            "The directory has been left intact for logging purposes."
-        )
-        print(snippet)
+        print(path)

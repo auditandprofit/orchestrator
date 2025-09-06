@@ -15,10 +15,6 @@ warnings.filterwarnings(
 GENERATED_DIR = Path("generated")
 GENERATED_DIR.mkdir(parents=True, exist_ok=True)
 
-# Directory for preserving errors from Codex and OpenAI calls
-ERROR_DIR = GENERATED_DIR / "errors"
-ERROR_DIR.mkdir(parents=True, exist_ok=True)
-
 from openai import (
     APIConnectionError,
     APITimeoutError,
@@ -45,6 +41,7 @@ NETWORK_EXCEPTIONS = (
 def run_codex_cli(
     prompt: str,
     workdir: Path,
+    output_dir: Path,
     max_retries: int = 3,
     timeout: Optional[int] = None,
 ) -> Tuple[str, Path]:
@@ -57,6 +54,7 @@ def run_codex_cli(
     Args:
         prompt: The prompt to pass to the codex CLI.
         workdir: Directory to run the codex command from.
+        output_dir: Base directory to store Codex output.
         max_retries: Maximum number of retries when a timeout occurs.
         timeout: Optional timeout for the subprocess call in seconds.
 
@@ -70,7 +68,7 @@ def run_codex_cli(
         immediately.
     """
     for attempt in range(max_retries):
-        tmpdir = Path(tempfile.mkdtemp(prefix="codex_exec_", dir=GENERATED_DIR))
+        tmpdir = Path(tempfile.mkdtemp(prefix="codex_exec_", dir=output_dir))
         output_path = tmpdir / "final_message.txt"
         try:
             subprocess.run(

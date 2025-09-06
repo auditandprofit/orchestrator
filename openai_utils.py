@@ -76,7 +76,7 @@ def run_codex_cli(
                     "--skip-git-repo-check",
                     "-C",
                     str(workdir),
-                    "--output-file",
+                    "--output-last-message",
                     str(output_path),
                     prompt,
                 ],

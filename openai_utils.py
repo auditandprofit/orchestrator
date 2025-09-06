@@ -15,6 +15,10 @@ warnings.filterwarnings(
 GENERATED_DIR = Path("generated")
 GENERATED_DIR.mkdir(parents=True, exist_ok=True)
 
+# Directory for preserving errors from Codex and OpenAI calls
+ERROR_DIR = GENERATED_DIR / "errors"
+ERROR_DIR.mkdir(parents=True, exist_ok=True)
+
 from openai import (
     APIConnectionError,
     APITimeoutError,
@@ -91,9 +95,9 @@ def run_codex_cli(
                 raise
             time.sleep(1)
         except subprocess.CalledProcessError as e:
-            # Surface stderr from the Codex CLI when execution fails.
-            print(e.stderr)
-            raise
+            # Include stderr from the Codex CLI in the raised exception for logging.
+            msg = e.stderr or str(e)
+            raise Exception(msg) from e
         except Exception:
             # Any non-timeout exception should fail fast.
             raise

@@ -5,8 +5,9 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import tempfile
+import traceback
 
-from openai_utils import GENERATED_DIR, call_openai_api, run_codex_cli
+from openai_utils import GENERATED_DIR, ERROR_DIR, call_openai_api, run_codex_cli
 
 
 def _run_flow(
@@ -24,6 +25,7 @@ def _run_flow(
 
     prev_output = ""
     prev_path: Optional[Path] = None
+    error_dir: Optional[Path] = None
 
     for idx, step in enumerate(config):
         step_type = step.get("type")
@@ -49,6 +51,19 @@ def _run_flow(
                 prev_path = None
             else:
                 raise ValueError(f"Unknown step type: {step_type}")
+        except Exception as e:
+            if error_dir is None:
+                error_dir = Path(
+                    tempfile.mkdtemp(prefix="run_", dir=ERROR_DIR)
+                )
+            error_file = error_dir / f"step_{idx}_{step_type}.txt"
+            error_file.write_text(
+                f"{type(e).__name__}: {e}\n{traceback.format_exc()}",
+                encoding="utf-8",
+            )
+            prev_output = ""
+            prev_path = error_file
+            break
         finally:
             with lock:
                 step_counts[idx] -= 1

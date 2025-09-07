@@ -16,6 +16,7 @@ def _run_flow(
     lock: threading.Lock,
     workdir: Path,
     flow_dir: Path,
+    codex_timeout: Optional[int] = None,
 ) -> Tuple[str, Optional[Path]]:
     """Execute a single flow defined in config, updating step counts.
 
@@ -40,7 +41,9 @@ def _run_flow(
 
         try:
             if step_type == "codex":
-                prev_output, prev_path = run_codex_cli(prompt, workdir, flow_dir)
+                prev_output, prev_path = run_codex_cli(
+                    prompt, workdir, flow_dir, timeout=codex_timeout
+                )
             elif step_type == "openai":
                 response = call_openai_api(prompt)
                 # Responses API returns dict; extract content if possible
@@ -128,6 +131,7 @@ def orchestrate(
     flow_configs: List[List[Dict[str, Any]]],
     parallel: int = 1,
     workdir: Path = Path("."),
+    codex_timeout: Optional[int] = None,
 ) -> List[Tuple[str, Optional[Path], Path]]:
     """Execute multiple flows with a concurrency cap while logging active counts.
 
@@ -135,6 +139,13 @@ def orchestrate(
     the file holding that message when produced by a codex step, and the flow's
     output directory. Each step may optionally define a ``name`` field, which is
     used in the live progress output instead of the underlying step ``type``.
+
+    Args:
+        base_config: The original configuration defining step types and prompts.
+        flow_configs: Expanded configurations for each flow.
+        parallel: Maximum number of flows to run concurrently.
+        workdir: Directory to run codex commands from.
+        codex_timeout: Optional timeout in seconds for codex CLI invocations.
     """
 
     # Prefer a user-defined name for each step when displaying progress; fall back
@@ -151,7 +162,9 @@ def orchestrate(
 
     def worker(idx: int, flow_conf: List[Dict[str, Any]], flow_dir: Path):
         nonlocal finished
-        result, path = _run_flow(flow_conf, step_counts, step_lock, workdir, flow_dir)
+        result, path = _run_flow(
+            flow_conf, step_counts, step_lock, workdir, flow_dir, codex_timeout
+        )
         results[idx] = (result, path, flow_dir)
         with progress_lock:
             finished += 1
@@ -236,6 +249,12 @@ if __name__ == "__main__":
         required=True,
         help="Directory to run codex commands from",
     )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=None,
+        help="Timeout in seconds for each codex CLI invocation",
+    )
     args = parser.parse_args()
 
     with open(args.config, "r", encoding="utf-8") as f:
@@ -257,6 +276,7 @@ if __name__ == "__main__":
         flow_configs,
         parallel=args.parallel,
         workdir=Path(args.workdir),
+        codex_timeout=args.timeout,
     )
     for idx, (res, path, flow_dir) in enumerate(results):
         if path is None:

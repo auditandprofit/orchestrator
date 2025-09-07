@@ -25,6 +25,12 @@ The `--parallel` flag sets a **maximum** number of flows that may run
 concurrently. When more flows are scheduled, they queue until a slot becomes
 available.
 
+Use `--timeout` to specify a timeout (in seconds) for each Codex CLI invocation:
+
+```bash
+python orchestrator.py config.json --timeout 30 --workdir repo
+```
+
 You can also supply files whose contents are interpolated into the prompts of
 each flow. Each `--key` flag specifies a placeholder and a text file containing
 line-separated file paths. Placeholders must be wrapped in triple braces (e.g.

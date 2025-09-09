@@ -77,3 +77,11 @@ with open("generated/flow_xxxx/codex_exec_xxxx/final_message.txt") as f:
 
 Each flow directory is left intact for logging.
 
+### Branching with arrays
+
+Add an `"array": true` field to any step that is expected to produce a JSON
+array. The orchestrator parses the array and runs the remaining steps once for
+each element in parallel. Each element is passed to the next phase as the
+previous step's output, and the final results from all branches are returned as
+separate flow outputs.
+

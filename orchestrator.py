@@ -18,20 +18,23 @@ def _run_flow(
     workdir: Path,
     flow_dir: Path,
     codex_timeout: Optional[int] = None,
-) -> Tuple[str, Optional[Path]]:
-    """Execute a single flow defined in config, updating step counts.
+) -> List[Tuple[str, Optional[Path], Path]]:
+    """Execute a single flow defined in ``config``.
 
-    Returns a tuple of the final output and the path to the final message file
-    when the last step was a codex invocation. For non-codex final steps, the
-    path is ``None``. ``flow_dir`` is the directory where all artifacts for this
-    flow are stored.
+    When a step includes ``{"array": true}``, the step's output is parsed as a
+    JSON array. The remaining steps are executed for each element in parallel,
+    effectively branching the flow. The final result is a list of tuples
+    containing each branch's output, the path to a final message file when the
+    last step was a codex invocation, and the directory for that branch.
     """
 
-    prev_output = ""
-    prev_path: Optional[Path] = None
-    error_dir: Optional[Path] = None
+    def run_from(
+        idx: int, prev_output: str, prev_path: Optional[Path], curr_dir: Path
+    ) -> List[Tuple[str, Optional[Path], Path]]:
+        if idx >= len(config):
+            return [(prev_output, prev_path, curr_dir)]
 
-    for idx, step in enumerate(config):
+        step = config[idx]
         step_type = step.get("type")
         prompt = step.get("prompt", "")
         if prev_output:
@@ -42,19 +45,17 @@ def _run_flow(
 
         try:
             if step_type == "codex":
-                prev_output, prev_path = run_codex_cli(
-                    prompt, workdir, flow_dir, timeout=codex_timeout
+                output, path = run_codex_cli(
+                    prompt, workdir, curr_dir, timeout=codex_timeout
                 )
             elif step_type == "openai":
                 response = call_openai_api(prompt)
-                # Responses API returns dict; extract content if possible
-                output_text = (
+                output = (
                     response.get("output", [{}])[0]
                     .get("content", [{}])[0]
                     .get("text", "")
                 )
-                prev_output = output_text
-                prev_path = None
+                path = None
             elif "cmd" in step:
                 completed = subprocess.run(
                     step["cmd"],
@@ -65,30 +66,68 @@ def _run_flow(
                     cwd=workdir,
                     check=True,
                 )
-                prev_output = completed.stdout
-                prev_path = None
+                output = completed.stdout
+                path = None
             else:
                 raise ValueError(f"Unknown step type: {step_type}")
         except Exception as e:
-            if error_dir is None:
-                errors_base = flow_dir / "errors"
-                errors_base.mkdir(parents=True, exist_ok=True)
-                error_dir = Path(
-                    tempfile.mkdtemp(prefix="run_", dir=errors_base)
-                )
-            error_file = error_dir / f"step_{idx}_{step_type}.txt"
+            errors_base = curr_dir / "errors"
+            errors_base.mkdir(parents=True, exist_ok=True)
+            err_dir = Path(tempfile.mkdtemp(prefix="run_", dir=errors_base))
+            error_file = err_dir / f"step_{idx}_{step_type}.txt"
             error_file.write_text(
                 f"{type(e).__name__}: {e}\n{traceback.format_exc()}",
                 encoding="utf-8",
             )
-            prev_output = ""
-            prev_path = error_file
-            break
+            output = ""
+            path = error_file
+            return [(output, path, curr_dir)]
         finally:
             with lock:
                 step_counts[idx] -= 1
 
-    return prev_output, prev_path
+        if step.get("array"):
+            try:
+                items = json.loads(output)
+                if not isinstance(items, list):
+                    raise ValueError("Expected JSON array")
+            except Exception as e:
+                errors_base = curr_dir / "errors"
+                errors_base.mkdir(parents=True, exist_ok=True)
+                err_dir = Path(tempfile.mkdtemp(prefix="run_", dir=errors_base))
+                error_file = err_dir / f"step_{idx}_array.txt"
+                error_file.write_text(
+                    f"JSON error: {e}\n{traceback.format_exc()}",
+                    encoding="utf-8",
+                )
+                return [("", error_file, curr_dir)]
+
+            results: List[Tuple[str, Optional[Path], Path]] = []
+            threads: List[threading.Thread] = []
+            res_lock = threading.Lock()
+
+            for i, item in enumerate(items):
+                branch_dir = curr_dir / f"branch_{i}"
+                branch_dir.mkdir(parents=True, exist_ok=True)
+                item_str = json.dumps(item) if not isinstance(item, str) else item
+
+                def worker(s=item_str, bdir=branch_dir):
+                    branch_res = run_from(idx + 1, s, None, bdir)
+                    with res_lock:
+                        results.extend(branch_res)
+
+                t = threading.Thread(target=worker)
+                t.start()
+                threads.append(t)
+
+            for t in threads:
+                t.join()
+
+            return results
+
+        return run_from(idx + 1, output, path, curr_dir)
+
+    return run_from(0, "", None, flow_dir)
 
 
 def _generate_flow_configs(
@@ -153,10 +192,12 @@ def orchestrate(
 ) -> List[Tuple[str, Optional[Path], Path]]:
     """Execute multiple flows with a concurrency cap while logging active counts.
 
-    Returns a list of tuples containing each flow's final message, the path to
-    the file holding that message when produced by a codex step, and the flow's
-    output directory. Each step may optionally define a ``name`` field, which is
-    used in the live progress output instead of the underlying step ``type``.
+    Returns a list of tuples containing each branch's final message, the path to
+    the file holding that message when produced by a codex step, and the branch's
+    output directory. Steps may define ``{"array": true}`` to branch a flow based
+    on a JSON array output. Each step may optionally define a ``name`` field,
+    which is used in the live progress output instead of the underlying step
+    ``type``.
 
     Args:
         base_config: The original configuration defining step types and prompts.
@@ -172,19 +213,17 @@ def orchestrate(
     step_counts = [0] * len(base_config)
     step_lock = threading.Lock()
     progress_lock = threading.Lock()
-    results: List[Tuple[str, Optional[Path], Path]] = [
-        ("", None, Path())
-    ] * len(flow_configs)
+    results: List[Tuple[str, Optional[Path], Path]] = []
     finished = 0
     total = len(flow_configs)
 
-    def worker(idx: int, flow_conf: List[Dict[str, Any]], flow_dir: Path):
+    def worker(flow_conf: List[Dict[str, Any]], flow_dir: Path):
         nonlocal finished
-        result, path = _run_flow(
+        branch_results = _run_flow(
             flow_conf, step_counts, step_lock, workdir, flow_dir, codex_timeout
         )
-        results[idx] = (result, path, flow_dir)
         with progress_lock:
+            results.extend(branch_results)
             finished += 1
 
     stop_event = threading.Event()
@@ -217,13 +256,13 @@ def orchestrate(
     monitor_thread = threading.Thread(target=monitor)
     monitor_thread.start()
 
-    for idx, flow_conf in enumerate(flow_configs):
+    for flow_conf in flow_configs:
         flow_dir = Path(tempfile.mkdtemp(prefix="flow_", dir=GENERATED_DIR))
         while True:
             with progress_lock:
                 active = len([t for t in threads if t.is_alive()])
             if active < parallel:
-                t = threading.Thread(target=worker, args=(idx, flow_conf, flow_dir))
+                t = threading.Thread(target=worker, args=(flow_conf, flow_dir))
                 threads.append(t)
                 t.start()
                 break

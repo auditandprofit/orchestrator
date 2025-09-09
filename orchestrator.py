@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import tempfile
 import traceback
+import subprocess
 
 from openai_utils import GENERATED_DIR, call_openai_api, run_codex_cli
 
@@ -53,6 +54,18 @@ def _run_flow(
                     .get("text", "")
                 )
                 prev_output = output_text
+                prev_path = None
+            elif "cmd" in step:
+                completed = subprocess.run(
+                    step["cmd"],
+                    input=prev_output,
+                    capture_output=True,
+                    text=True,
+                    shell=True,
+                    cwd=workdir,
+                    check=True,
+                )
+                prev_output = completed.stdout
                 prev_path = None
             else:
                 raise ValueError(f"Unknown step type: {step_type}")
@@ -116,10 +129,15 @@ def _generate_flow_configs(
         for step in base_config:
             new_step = dict(step)
             prompt = new_step.get("prompt", "")
+            cmd_str = new_step.get("cmd")
             for key, value in mapping.items():
                 placeholder = "{{{" + key + "}}}"
                 prompt = prompt.replace(placeholder, value)
+                if cmd_str is not None:
+                    cmd_str = cmd_str.replace(placeholder, value)
             new_step["prompt"] = prompt
+            if cmd_str is not None:
+                new_step["cmd"] = cmd_str
             flow.append(new_step)
         flow_configs.append(flow)
 

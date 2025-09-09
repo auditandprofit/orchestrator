@@ -4,14 +4,18 @@ A simple configurable orchestration system that chains Codex and OpenAI model ca
 
 ## Usage
 
-Create a JSON configuration describing each step. Each item requires a `type`
-(`"codex"` or `"openai"`) and a `prompt`. You can optionally supply a
-`name` to use in the live progress output instead of the step type.
+Create a JSON configuration describing each step. For built-in model calls, each
+item requires a `type` (`"codex"` or `"openai"`) and a `prompt`. You can
+optionally supply a `name` to use in the live progress output instead of the
+step type. Steps may also include a `cmd` field to run an arbitrary shell
+command; the previous step's output is piped to the command's standard input and
+its standard output is passed to the next step.
 
 ```json
 [
   {"type": "openai", "name": "draft", "prompt": "Write a limerick about orchestration."},
-  {"type": "openai", "name": "summary", "prompt": "Summarize the previous output."}
+  {"type": "openai", "name": "summary", "prompt": "Summarize the previous output."},
+  {"type": "shout", "cmd": "tr '[:lower:]' '[:upper:]'"}
 ]
 ```
 

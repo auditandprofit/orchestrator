@@ -36,14 +36,18 @@ def _run_flow(
 
         step = config[idx]
         step_type = step.get("type")
-        prompt = step.get("prompt", "")
-        if prev_output:
-            prompt = f"{prompt}\n{prev_output}".strip()
 
         with lock:
             step_counts[idx] += 1
 
         try:
+            prompt = step.get("prompt", "")
+            prmpt_file = step.get("prmpt_file")
+            if prmpt_file:
+                prompt = Path(prmpt_file).read_text(encoding="utf-8")
+            if prev_output:
+                prompt = f"{prompt}\n{prev_output}".strip()
+
             if step_type == "codex":
                 output, path = run_codex_cli(
                     prompt, workdir, curr_dir, timeout=codex_timeout
@@ -169,12 +173,17 @@ def _generate_flow_configs(
             new_step = dict(step)
             prompt = new_step.get("prompt", "")
             cmd_str = new_step.get("cmd")
+            prmpt_file = new_step.get("prmpt_file")
             for key, value in mapping.items():
                 placeholder = "{{{" + key + "}}}"
                 prompt = prompt.replace(placeholder, value)
                 if cmd_str is not None:
                     cmd_str = cmd_str.replace(placeholder, value)
+                if prmpt_file is not None:
+                    prmpt_file = prmpt_file.replace(placeholder, value)
             new_step["prompt"] = prompt
+            if prmpt_file is not None:
+                new_step["prmpt_file"] = prmpt_file
             if cmd_str is not None:
                 new_step["cmd"] = cmd_str
             flow.append(new_step)

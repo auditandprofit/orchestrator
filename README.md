@@ -5,15 +5,16 @@ A simple configurable orchestration system that chains Codex and OpenAI model ca
 ## Usage
 
 Create a JSON configuration describing each step. For built-in model calls, each
-item requires a `type` (`"codex"` or `"openai"`) and a `prompt`. You can
-optionally supply a `name` to use in the live progress output instead of the
-step type. Steps may also include a `cmd` field to run an arbitrary shell
+item requires a `type` (`"codex"` or `"openai"`) and either a `prompt` or a
+`prmpt_file` pointing to a file containing the prompt. You can optionally
+include a `name` to use in the live progress output instead of the step type.
+Steps may also include a `cmd` field to run an arbitrary shell
 command; the previous step's output is piped to the command's standard input and
 its standard output is passed to the next step.
 
 ```json
 [
-  {"type": "openai", "name": "draft", "prompt": "Write a limerick about orchestration."},
+  {"type": "openai", "name": "draft", "prmpt_file": "prompts/draft.txt"},
   {"type": "openai", "name": "summary", "prompt": "Summarize the previous output."},
   {"type": "shout", "cmd": "tr '[:lower:]' '[:upper:]'"}
 ]
@@ -48,8 +49,9 @@ python orchestrator.py config.json --parallel 10 --key foo:paths.txt
 ```
 
 Any prompt containing `{{{foo}}}` will have that placeholder replaced with the
-contents of each file listed in `paths.txt`. Use `--append-filepath` to append
-the path of each interpolated file after its contents in the prompt.
+contents of each file listed in `paths.txt`. Placeholders are also substituted in
+`prmpt_file` paths and `cmd` strings. Use `--append-filepath` to append the path
+of each interpolated file after its contents in the prompt.
 
 While running, the orchestrator logs a live view of the number of active flows at
 each step, along with overall progress `finished/total`. If a step includes a

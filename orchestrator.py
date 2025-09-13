@@ -43,7 +43,7 @@ def _run_flow(
         try:
             prompt = step.get("prompt", "")
             prmpt_file = step.get("prmpt_file")
-            if prmpt_file:
+            if prmpt_file and not prompt:
                 prompt = Path(prmpt_file).read_text(encoding="utf-8")
             if prev_output:
                 prompt = f"{prompt}\n{prev_output}".strip()

@@ -181,9 +181,13 @@ def _generate_flow_configs(
                     cmd_str = cmd_str.replace(placeholder, value)
                 if prmpt_file is not None:
                     prmpt_file = prmpt_file.replace(placeholder, value)
-            new_step["prompt"] = prompt
             if prmpt_file is not None:
+                prompt = Path(prmpt_file).read_text(encoding="utf-8")
+                for key, value in mapping.items():
+                    placeholder = "{{{" + key + "}}}"
+                    prompt = prompt.replace(placeholder, value)
                 new_step["prmpt_file"] = prmpt_file
+            new_step["prompt"] = prompt
             if cmd_str is not None:
                 new_step["cmd"] = cmd_str
             flow.append(new_step)

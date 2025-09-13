@@ -67,10 +67,11 @@ the final step.
 
 Each step receives the output of the previous step appended to its prompt. Each
 flow has its own directory inside `generated`, and Codex invocations create
-subdirectories within that flow. When the final step is handled by the codex
-CLI, its concluding message is written to a file in the flow's directory so it
-remains available after the run. The script prints the path so downstream code
-can read the message:
+subdirectories within that flow. During execution, the Codex process's standard
+output is streamed to `stdout.txt` in its subdirectory. When the final step is
+handled by the codex CLI, its concluding message is written to
+`final_message.txt` in the same location so it remains available after the run.
+The script prints the path so downstream code can read the message:
 
 ```python
 with open("generated/flow_xxxx/codex_exec_xxxx/final_message.txt") as f:

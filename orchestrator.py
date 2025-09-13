@@ -271,6 +271,7 @@ def orchestrate(
 
     for flow_conf in flow_configs:
         flow_dir = Path(tempfile.mkdtemp(prefix="flow_", dir=GENERATED_DIR))
+        print(flow_dir.resolve())
         while True:
             with progress_lock:
                 active = len([t for t in threads if t.is_alive()])

@@ -2,6 +2,7 @@ import subprocess
 import time
 import warnings
 import tempfile
+import threading
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -48,8 +49,9 @@ def run_codex_cli(
     """Run the Codex CLI and capture its final message via file output.
 
     The codex CLI supports writing its final message to a file. This helper
-    invokes the CLI with that argument, then reads the file to obtain the
-    message so it can be passed to subsequent steps.
+    invokes the CLI with that argument, streams the process's standard output to
+    ``stdout.txt`` in the execution directory, then reads the final message file
+    so it can be passed to subsequent steps.
 
     Args:
         prompt: The prompt to pass to the codex CLI.
@@ -70,28 +72,62 @@ def run_codex_cli(
     for attempt in range(max_retries):
         tmpdir = Path(tempfile.mkdtemp(prefix="codex_exec_", dir=output_dir))
         output_path = tmpdir / "final_message.txt"
+        stdout_path = tmpdir / "stdout.txt"
         try:
-            subprocess.run(
-                [
-                    "codex",
-                    "exec",
-                    "--skip-git-repo-check",
-                    "-C",
-                    str(workdir),
-                    "--output-last-message",
-                    str(output_path),
-                    prompt,
-                ],
-                capture_output=True,
-                check=True,
-                text=True,
-                timeout=timeout,
-            )
-            return output_path.read_text(encoding="utf-8"), output_path
-        except subprocess.TimeoutExpired:
-            if attempt == max_retries - 1:
-                raise
-            time.sleep(1)
+            with stdout_path.open("w", encoding="utf-8") as out_f:
+                proc = subprocess.Popen(
+                    [
+                        "codex",
+                        "exec",
+                        "--skip-git-repo-check",
+                        "-C",
+                        str(workdir),
+                        "--output-last-message",
+                        str(output_path),
+                        prompt,
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+
+                stderr_lines = []
+
+                def stream_stdout():
+                    for line in proc.stdout:  # type: ignore[arg-type]
+                        out_f.write(line)
+                        out_f.flush()
+
+                def collect_stderr():
+                    for line in proc.stderr:  # type: ignore[arg-type]
+                        stderr_lines.append(line)
+
+                t_out = threading.Thread(target=stream_stdout)
+                t_err = threading.Thread(target=collect_stderr)
+                t_out.start()
+                t_err.start()
+
+                try:
+                    proc.wait(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    t_out.join()
+                    t_err.join()
+                    if attempt == max_retries - 1:
+                        raise
+                    time.sleep(1)
+                    continue
+
+                t_out.join()
+                t_err.join()
+
+                if proc.returncode != 0:
+                    msg = "".join(stderr_lines) or str(proc.returncode)
+                    raise subprocess.CalledProcessError(
+                        proc.returncode, proc.args, stderr=msg
+                    )
+
+                return output_path.read_text(encoding="utf-8"), output_path
         except subprocess.CalledProcessError as e:
             # Include stderr from the Codex CLI in the raised exception for logging.
             msg = e.stderr or str(e)

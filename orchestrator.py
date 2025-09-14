@@ -71,6 +71,8 @@ def _run_flow(
                     check=True,
                 )
                 output = completed.stdout
+                stdout_file = curr_dir / f"step_{idx}_cmd.txt"
+                stdout_file.write_text(output, encoding="utf-8")
                 path = None
             else:
                 raise ValueError(f"Unknown step type: {step_type}")

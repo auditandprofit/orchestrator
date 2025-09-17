@@ -1,3 +1,5 @@
+import shlex
+import sys
 import threading
 
 import pytest
@@ -55,3 +57,18 @@ def test_orchestrate_can_disable_flow_path_output(tmp_path, capsys, monkeypatch)
 
     captured = capsys.readouterr()
     assert "flow_" not in captured.out
+
+
+def test_cmd_failure_forwards_stderr(tmp_path, capsys):
+    script = tmp_path / "failing_script.py"
+    script.write_text(
+        "import sys\nsys.stderr.write('boom\\n')\nsys.exit(1)\n",
+        encoding="utf-8",
+    )
+    cmd = f"{shlex.quote(sys.executable)} {shlex.quote(str(script))}"
+    config = [{"type": "cmd", "cmd": cmd}]
+
+    orchestrator._run_flow(config, [0], threading.Lock(), tmp_path, tmp_path)
+
+    captured = capsys.readouterr()
+    assert "boom" in captured.err

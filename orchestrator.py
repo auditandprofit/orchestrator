@@ -97,6 +97,14 @@ def _run_flow(
             else:
                 raise ValueError(f"Unknown step type: {step_type}")
         except Exception as e:
+            if isinstance(e, subprocess.CalledProcessError) and e.stderr:
+                try:
+                    sys.stderr.write(e.stderr)
+                    if not e.stderr.endswith("\n"):
+                        sys.stderr.write("\n")
+                    sys.stderr.flush()
+                except Exception:
+                    pass
             mark_failed()
             errors_base = curr_dir / "errors"
             errors_base.mkdir(parents=True, exist_ok=True)

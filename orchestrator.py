@@ -344,6 +344,8 @@ def orchestrate(
             display = prog
         print(display)
 
+    run_dir = Path(tempfile.mkdtemp(prefix="run_", dir=GENERATED_DIR))
+
     threads: List[threading.Thread] = []
     monitor_thread = threading.Thread(target=monitor)
     monitor_thread.start()
@@ -351,7 +353,7 @@ def orchestrate(
     for flow_conf in flow_configs:
         if cancel_event.is_set():
             break
-        flow_dir = Path(tempfile.mkdtemp(prefix="flow_", dir=GENERATED_DIR))
+        flow_dir = Path(tempfile.mkdtemp(prefix="flow_", dir=run_dir))
         if print_flow_paths:
             print(flow_dir.resolve())
         while True:

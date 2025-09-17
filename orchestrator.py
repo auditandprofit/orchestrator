@@ -236,6 +236,7 @@ def orchestrate(
     workdir: Path = Path("."),
     codex_timeout: Optional[int] = None,
     max_flow_failures: int = 3,
+    print_flow_paths: bool = True,
 ) -> List[Tuple[str, Optional[Path], Path]]:
     """Execute multiple flows with a concurrency cap while logging active counts.
 
@@ -254,6 +255,8 @@ def orchestrate(
         codex_timeout: Optional timeout in seconds for codex CLI invocations.
         max_flow_failures: Maximum number of flow-level failures allowed before
             cancelling remaining work.
+        print_flow_paths: When ``True`` (default), emit the generated flow
+            directory path for each flow to standard output.
 
     Raises:
         MaxFlowFailuresExceeded: When the number of failed flows reaches the
@@ -342,7 +345,8 @@ def orchestrate(
         if cancel_event.is_set():
             break
         flow_dir = Path(tempfile.mkdtemp(prefix="flow_", dir=GENERATED_DIR))
-        print(flow_dir.resolve())
+        if print_flow_paths:
+            print(flow_dir.resolve())
         while True:
             if cancel_event.is_set():
                 break
@@ -413,6 +417,11 @@ if __name__ == "__main__":
         default=None,
         help="Timeout in seconds for each codex CLI invocation",
     )
+    parser.add_argument(
+        "--hide-flow-paths",
+        action="store_true",
+        help="Suppress printing the generated flow directory paths",
+    )
     args = parser.parse_args()
 
     with open(args.config, "r", encoding="utf-8") as f:
@@ -437,6 +446,7 @@ if __name__ == "__main__":
             workdir=Path(args.workdir),
             codex_timeout=args.timeout,
             max_flow_failures=args.max_flow_failures,
+            print_flow_paths=not args.hide_flow_paths,
         )
     except MaxFlowFailuresExceeded:
         sys.exit(1)

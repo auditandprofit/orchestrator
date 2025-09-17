@@ -37,3 +37,21 @@ def test_orchestrate_stops_after_max_failures(tmp_path, capsys):
 
     captured = capsys.readouterr()
     assert "Maximum flow failures reached" in captured.out
+
+
+def test_orchestrate_can_disable_flow_path_output(tmp_path, capsys, monkeypatch):
+    base_config = [{"type": "cmd", "cmd": "printf hi"}]
+    flow_configs = [_copy_flow(base_config)]
+
+    monkeypatch.setattr(orchestrator, "GENERATED_DIR", tmp_path)
+
+    orchestrator.orchestrate(
+        base_config,
+        flow_configs,
+        parallel=1,
+        workdir=tmp_path,
+        print_flow_paths=False,
+    )
+
+    captured = capsys.readouterr()
+    assert "flow_" not in captured.out

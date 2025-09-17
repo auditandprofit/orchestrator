@@ -16,27 +16,47 @@ warnings.filterwarnings(
 GENERATED_DIR = Path("generated")
 GENERATED_DIR.mkdir(parents=True, exist_ok=True)
 
-from openai import (
-    APIConnectionError,
-    APITimeoutError,
-    APIStatusError,
-    OpenAI,
-)
-import requests
+try:
+    from openai import (
+        APIConnectionError,
+        APITimeoutError,
+        APIStatusError,
+        OpenAI,
+    )
+except ModuleNotFoundError:
+    OpenAI = None  # type: ignore[assignment]
+
+    class _MissingOpenAIError(Exception):
+        """Fallback error type when the openai package is unavailable."""
+
+    APIConnectionError = APITimeoutError = APIStatusError = _MissingOpenAIError  # type: ignore[assignment]
+    _OPENAI_AVAILABLE = False
+else:
+    _OPENAI_AVAILABLE = True
+
+try:
+    import requests
+except ModuleNotFoundError:
+    class _RequestsFallback:
+        class exceptions:  # type: ignore[no-redef]
+            class RequestException(Exception):
+                """Fallback RequestException when requests is unavailable."""
+
+    requests = _RequestsFallback()  # type: ignore[assignment]
 
 
 class CodexTimeoutError(Exception):
     """Custom exception for codex CLI timeouts."""
 
 
-client = OpenAI()
+client = OpenAI() if _OPENAI_AVAILABLE else None
 
 NETWORK_EXCEPTIONS = (
     requests.exceptions.RequestException,
     APIConnectionError,
     APITimeoutError,
     APIStatusError,
-)
+) if _OPENAI_AVAILABLE else (requests.exceptions.RequestException,)
 
 
 def run_codex_cli(
@@ -151,6 +171,9 @@ def call_openai_api(prompt: str, max_retries: int = 3) -> dict:
         openai.OpenAIError: If network errors persist after retries.
         Exception: Any other exception is raised immediately.
     """
+    if client is None:
+        raise ModuleNotFoundError("openai package is required to call the OpenAI API")
+
     for attempt in range(max_retries):
         try:
             response = client.responses.create(model="gpt-4o-mini", input=prompt)

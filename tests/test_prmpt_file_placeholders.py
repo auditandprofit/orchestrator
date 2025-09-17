@@ -23,5 +23,8 @@ def test_prmpt_file_placeholders(tmp_path, monkeypatch):
 
     monkeypatch.setattr(orchestrator, "call_openai_api", fake_api)
 
-    res = orchestrator._run_flow(flows[0], [0], threading.Lock(), tmp_path, tmp_path)
+    res, failed = orchestrator._run_flow(
+        flows[0], [0], threading.Lock(), tmp_path, tmp_path
+    )
+    assert not failed
     assert res[0][0] == "Hello World!"

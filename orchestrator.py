@@ -7,8 +7,17 @@ from typing import Any, Dict, List, Optional, Tuple
 import tempfile
 import traceback
 import subprocess
+import sys
 
 from openai_utils import GENERATED_DIR, call_openai_api, run_codex_cli
+
+
+class FlowCancelled(Exception):
+    """Raised when a flow is cancelled due to exceeding failure limits."""
+
+
+class MaxFlowFailuresExceeded(Exception):
+    """Raised when the maximum number of flow failures has been reached."""
 
 
 def _run_flow(
@@ -18,19 +27,30 @@ def _run_flow(
     workdir: Path,
     flow_dir: Path,
     codex_timeout: Optional[int] = None,
-) -> List[Tuple[str, Optional[Path], Path]]:
+    cancel_event: Optional[threading.Event] = None,
+) -> Tuple[List[Tuple[str, Optional[Path], Path]], bool]:
     """Execute a single flow defined in ``config``.
 
     When a step includes ``{"array": true}``, the step's output is parsed as a
     JSON array. The remaining steps are executed for each element in parallel,
     effectively branching the flow. The final result is a list of tuples
     containing each branch's output, the path to a final message file when the
-    last step was a codex invocation, and the directory for that branch.
+    last step was a codex invocation, and the directory for that branch. A
+    boolean flag is returned alongside the results indicating whether any part
+    of the flow failed.
     """
+
+    flow_failed = False
+
+    def mark_failed() -> None:
+        nonlocal flow_failed
+        flow_failed = True
 
     def run_from(
         idx: int, prev_output: str, prev_path: Optional[Path], curr_dir: Path
     ) -> List[Tuple[str, Optional[Path], Path]]:
+        if cancel_event and cancel_event.is_set():
+            raise FlowCancelled()
         if idx >= len(config):
             return [(prev_output, prev_path, curr_dir)]
 
@@ -77,6 +97,7 @@ def _run_flow(
             else:
                 raise ValueError(f"Unknown step type: {step_type}")
         except Exception as e:
+            mark_failed()
             errors_base = curr_dir / "errors"
             errors_base.mkdir(parents=True, exist_ok=True)
             err_dir = Path(tempfile.mkdtemp(prefix="run_", dir=errors_base))
@@ -98,6 +119,7 @@ def _run_flow(
                 if not isinstance(items, list):
                     raise ValueError("Expected JSON array")
             except Exception as e:
+                mark_failed()
                 errors_base = curr_dir / "errors"
                 errors_base.mkdir(parents=True, exist_ok=True)
                 err_dir = Path(tempfile.mkdtemp(prefix="run_", dir=errors_base))
@@ -118,7 +140,12 @@ def _run_flow(
                 item_str = json.dumps(item) if not isinstance(item, str) else item
 
                 def worker(s=item_str, bdir=branch_dir):
-                    branch_res = run_from(idx + 1, s, None, bdir)
+                    if cancel_event and cancel_event.is_set():
+                        return
+                    try:
+                        branch_res = run_from(idx + 1, s, None, bdir)
+                    except FlowCancelled:
+                        return
                     with res_lock:
                         results.extend(branch_res)
 
@@ -133,7 +160,11 @@ def _run_flow(
 
         return run_from(idx + 1, output, path, curr_dir)
 
-    return run_from(0, "", None, flow_dir)
+    results = run_from(0, "", None, flow_dir)
+    if flow_failed:
+        failure_marker = flow_dir / "flow_failed.txt"
+        failure_marker.write_text("Flow failed", encoding="utf-8")
+    return results, flow_failed
 
 
 def _generate_flow_configs(
@@ -204,6 +235,7 @@ def orchestrate(
     parallel: int = 1,
     workdir: Path = Path("."),
     codex_timeout: Optional[int] = None,
+    max_flow_failures: int = 3,
 ) -> List[Tuple[str, Optional[Path], Path]]:
     """Execute multiple flows with a concurrency cap while logging active counts.
 
@@ -220,10 +252,19 @@ def orchestrate(
         parallel: Maximum number of flows to run concurrently.
         workdir: Directory to run codex commands from.
         codex_timeout: Optional timeout in seconds for codex CLI invocations.
+        max_flow_failures: Maximum number of flow-level failures allowed before
+            cancelling remaining work.
+
+    Raises:
+        MaxFlowFailuresExceeded: When the number of failed flows reaches the
+            configured ``max_flow_failures`` threshold.
     """
 
     # Prefer a user-defined name for each step when displaying progress; fall back
     # to the step's type (e.g. "codex" or "openai") if no custom name is given.
+    if max_flow_failures < 1:
+        raise ValueError("max_flow_failures must be at least 1")
+
     step_names = [step.get("name") or step.get("type", "") for step in base_config]
     step_counts = [0] * len(base_config)
     step_lock = threading.Lock()
@@ -231,15 +272,41 @@ def orchestrate(
     results: List[Tuple[str, Optional[Path], Path]] = []
     finished = 0
     total = len(flow_configs)
+    failed_flows = 0
+    cancel_event = threading.Event()
+    cancel_message_printed = False
 
     def worker(flow_conf: List[Dict[str, Any]], flow_dir: Path):
-        nonlocal finished
-        branch_results = _run_flow(
-            flow_conf, step_counts, step_lock, workdir, flow_dir, codex_timeout
-        )
+        nonlocal finished, failed_flows, cancel_message_printed
+        try:
+            branch_results, flow_failed = _run_flow(
+                flow_conf,
+                step_counts,
+                step_lock,
+                workdir,
+                flow_dir,
+                codex_timeout,
+                cancel_event,
+            )
+        except FlowCancelled:
+            with progress_lock:
+                finished += 1
+            return
+
+        trigger_message = False
         with progress_lock:
             results.extend(branch_results)
             finished += 1
+            if flow_failed:
+                failed_flows += 1
+                if failed_flows >= max_flow_failures:
+                    cancel_event.set()
+                    if not cancel_message_printed:
+                        cancel_message_printed = True
+                        trigger_message = True
+
+        if trigger_message:
+            print("Maximum flow failures reached", flush=True)
 
     stop_event = threading.Event()
 
@@ -272,9 +339,13 @@ def orchestrate(
     monitor_thread.start()
 
     for flow_conf in flow_configs:
+        if cancel_event.is_set():
+            break
         flow_dir = Path(tempfile.mkdtemp(prefix="flow_", dir=GENERATED_DIR))
         print(flow_dir.resolve())
         while True:
+            if cancel_event.is_set():
+                break
             with progress_lock:
                 active = len([t for t in threads if t.is_alive()])
             if active < parallel:
@@ -284,11 +355,19 @@ def orchestrate(
                 break
             time.sleep(0.1)
 
+        if cancel_event.is_set():
+            break
+
     for t in threads:
         t.join()
 
     stop_event.set()
     monitor_thread.join()
+
+    if cancel_event.is_set() and failed_flows >= max_flow_failures:
+        if not cancel_message_printed:
+            print("Maximum flow failures reached", flush=True)
+        raise MaxFlowFailuresExceeded("Maximum flow failures reached")
 
     return results
 
@@ -318,6 +397,12 @@ if __name__ == "__main__":
         help="Append source file path after interpolated content",
     )
     parser.add_argument(
+        "--max-flow-failures",
+        type=int,
+        default=3,
+        help="Maximum number of flow failures allowed before cancelling execution",
+    )
+    parser.add_argument(
         "--workdir",
         required=True,
         help="Directory to run codex commands from",
@@ -344,13 +429,17 @@ if __name__ == "__main__":
         config, key_files, append_filepath=args.append_filepath
     )
 
-    results = orchestrate(
-        config,
-        flow_configs,
-        parallel=args.parallel,
-        workdir=Path(args.workdir),
-        codex_timeout=args.timeout,
-    )
+    try:
+        results = orchestrate(
+            config,
+            flow_configs,
+            parallel=args.parallel,
+            workdir=Path(args.workdir),
+            codex_timeout=args.timeout,
+            max_flow_failures=args.max_flow_failures,
+        )
+    except MaxFlowFailuresExceeded:
+        sys.exit(1)
     for idx, (res, path, flow_dir) in enumerate(results):
         if path is None:
             filename = (

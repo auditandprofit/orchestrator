@@ -66,15 +66,17 @@ indicating one flow is at the first step and another is nearing completion at
 the final step.
 
 Each step receives the output of the previous step appended to its prompt. Each
-flow has its own directory inside `generated`, and Codex invocations create
-subdirectories within that flow. During execution, the Codex process's standard
-output is streamed to `stdout.txt` in its subdirectory. When the final step is
-handled by the codex CLI, its concluding message is written to
-`final_message.txt` in the same location so it remains available after the run.
-The script prints the path so downstream code can read the message:
+orchestrator invocation creates a dedicated `run_xxxx` directory inside
+`generated`, and flows are stored beneath that run directory (for example,
+`generated/run_1234/flow_5678`). Codex invocations create subdirectories within
+each flow. During execution, the Codex process's standard output is streamed to
+`stdout.txt` in its subdirectory. When the final step is handled by the codex
+CLI, its concluding message is written to `final_message.txt` in the same
+location so it remains available after the run. The script prints the path so
+downstream code can read the message:
 
 ```python
-with open("generated/flow_xxxx/codex_exec_xxxx/final_message.txt") as f:
+with open("generated/run_xxxx/flow_xxxx/codex_exec_xxxx/final_message.txt") as f:
     final_message = f.read()
 ```
 

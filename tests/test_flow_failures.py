@@ -59,6 +59,34 @@ def test_orchestrate_can_disable_flow_path_output(tmp_path, capsys, monkeypatch)
     assert "flow_" not in captured.out
 
 
+def test_orchestrate_groups_flows_in_run_directory(tmp_path, monkeypatch):
+    base_config = [{"type": "cmd", "cmd": "printf hi"}]
+    flow_configs = [_copy_flow(base_config) for _ in range(2)]
+
+    monkeypatch.setattr(orchestrator, "GENERATED_DIR", tmp_path)
+
+    results = orchestrator.orchestrate(
+        base_config,
+        flow_configs,
+        parallel=2,
+        workdir=tmp_path,
+        print_flow_paths=False,
+    )
+
+    flow_dirs = {res[2] for res in results}
+    assert len(flow_dirs) == len(flow_configs)
+
+    run_dirs = {flow_dir.parent for flow_dir in flow_dirs}
+    assert len(run_dirs) == 1
+
+    run_dir = run_dirs.pop()
+    assert run_dir.parent == tmp_path
+    assert run_dir.name.startswith("run_")
+
+    for flow_dir in flow_dirs:
+        assert flow_dir.name.startswith("flow_")
+
+
 def test_cmd_failure_forwards_stderr(tmp_path, capsys):
     script = tmp_path / "failing_script.py"
     script.write_text(

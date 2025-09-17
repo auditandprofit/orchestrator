@@ -147,7 +147,17 @@ def run_codex_cli(
                         proc.returncode, proc.args, stderr=msg
                     )
 
-                return output_path.read_text(encoding="utf-8"), output_path
+                if output_path.exists():
+                    message = output_path.read_text(encoding="utf-8")
+                elif stdout_path.exists():
+                    message = stdout_path.read_text(encoding="utf-8")
+                    output_path.write_text(message, encoding="utf-8")
+                else:
+                    raise FileNotFoundError(
+                        "Codex CLI did not produce a final message file or stdout output"
+                    )
+
+                return message, output_path
         except subprocess.CalledProcessError as e:
             # Include stderr from the Codex CLI in the raised exception for logging.
             msg = e.stderr or str(e)

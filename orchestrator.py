@@ -87,7 +87,6 @@ def _run_flow(
                     capture_output=True,
                     text=True,
                     shell=True,
-                    cwd=workdir,
                     check=True,
                 )
                 output = completed.stdout

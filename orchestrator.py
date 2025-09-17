@@ -244,6 +244,7 @@ def orchestrate(
     codex_timeout: Optional[int] = None,
     max_flow_failures: int = 3,
     print_flow_paths: bool = True,
+    list_codex_final_paths: bool = False,
 ) -> List[Tuple[str, Optional[Path], Path]]:
     """Execute multiple flows with a concurrency cap while logging active counts.
 
@@ -264,6 +265,9 @@ def orchestrate(
             cancelling remaining work.
         print_flow_paths: When ``True`` (default), emit the generated flow
             directory path for each flow to standard output.
+        list_codex_final_paths: When ``True``, print the absolute path to each
+            Codex final message file as flows finish, provided the final step is
+            a Codex job and the flow completed successfully.
 
     Raises:
         MaxFlowFailuresExceeded: When the number of failed flows reaches the
@@ -276,6 +280,7 @@ def orchestrate(
         raise ValueError("max_flow_failures must be at least 1")
 
     step_names = [step.get("name") or step.get("type", "") for step in base_config]
+    final_step_is_codex = bool(base_config) and base_config[-1].get("type") == "codex"
     step_counts = [0] * len(base_config)
     step_lock = threading.Lock()
     progress_lock = threading.Lock()
@@ -303,6 +308,18 @@ def orchestrate(
                 finished += 1
             return
 
+        success_paths: List[Path] = []
+        if (
+            list_codex_final_paths
+            and final_step_is_codex
+            and not flow_failed
+        ):
+            success_paths = [
+                path
+                for _, path, _ in branch_results
+                if path is not None and path.name == "final_message.txt"
+            ]
+
         trigger_message = False
         with progress_lock:
             results.extend(branch_results)
@@ -314,6 +331,13 @@ def orchestrate(
                     if not cancel_message_printed:
                         cancel_message_printed = True
                         trigger_message = True
+
+        for path in success_paths:
+            try:
+                print(path.resolve(), flush=True)
+            except FileNotFoundError:
+                # If the file was removed before printing, skip emitting it.
+                continue
 
         if trigger_message:
             print("Maximum flow failures reached", flush=True)
@@ -431,6 +455,14 @@ if __name__ == "__main__":
         action="store_true",
         help="Suppress printing the generated flow directory paths",
     )
+    parser.add_argument(
+        "--list-final-message-paths",
+        action="store_true",
+        help=(
+            "When the final step is a Codex job, print the absolute path to each "
+            "final_message.txt as flows complete"
+        ),
+    )
     args = parser.parse_args()
 
     with open(args.config, "r", encoding="utf-8") as f:
@@ -456,6 +488,7 @@ if __name__ == "__main__":
             codex_timeout=args.timeout,
             max_flow_failures=args.max_flow_failures,
             print_flow_paths=not args.hide_flow_paths,
+            list_codex_final_paths=args.list_final_message_paths,
         )
     except MaxFlowFailuresExceeded:
         sys.exit(1)

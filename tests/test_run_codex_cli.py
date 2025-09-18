@@ -36,3 +36,10 @@ def test_run_codex_cli_falls_back_to_stdout(tmp_path, monkeypatch):
     assert len(exec_dirs) == 1
     stdout_path = exec_dirs[0] / "stdout.txt"
     assert stdout_path.read_text(encoding="utf-8") == "final output\n"
+    time_path = exec_dirs[0] / "time.txt"
+    time_contents = [
+        line for line in time_path.read_text(encoding="utf-8").splitlines() if line
+    ]
+    assert len(time_contents) >= 2
+    assert time_contents[0] == "0"
+    assert float(time_contents[1]) >= 0

@@ -93,7 +93,9 @@ def run_codex_cli(
         tmpdir = Path(tempfile.mkdtemp(prefix="codex_exec_", dir=output_dir))
         output_path = tmpdir / "final_message.txt"
         stdout_path = tmpdir / "stdout.txt"
+        time_path = tmpdir / "time.txt"
         try:
+            start_time = time.time()
             with stdout_path.open("w", encoding="utf-8") as out_f:
                 proc = subprocess.Popen(
                     [
@@ -141,6 +143,8 @@ def run_codex_cli(
                 t_out.join()
                 t_err.join()
 
+                duration = time.time() - start_time
+
                 if proc.returncode != 0:
                     msg = "".join(stderr_lines) or str(proc.returncode)
                     raise subprocess.CalledProcessError(
@@ -152,6 +156,9 @@ def run_codex_cli(
                 elif stdout_path.exists():
                     message = stdout_path.read_text(encoding="utf-8")
                     output_path.write_text(message, encoding="utf-8")
+                    time_path.write_text(
+                        f"{proc.returncode}\n{duration}\n", encoding="utf-8"
+                    )
                 else:
                     raise FileNotFoundError(
                         "Codex CLI did not produce a final message file or stdout output"

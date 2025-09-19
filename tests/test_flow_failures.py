@@ -1,6 +1,9 @@
+import json
 import shlex
+import subprocess
 import sys
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -100,3 +103,57 @@ def test_cmd_failure_forwards_stderr(tmp_path, capsys):
 
     captured = capsys.readouterr()
     assert "boom" in captured.err
+
+
+def test_orchestrate_can_ignore_max_failures(tmp_path, monkeypatch):
+    base_config = [{"type": "cmd", "cmd": "false"}]
+    flow_configs = [_copy_flow(base_config) for _ in range(3)]
+
+    monkeypatch.setattr(orchestrator, "GENERATED_DIR", tmp_path)
+
+    results = orchestrator.orchestrate(
+        base_config,
+        flow_configs,
+        parallel=2,
+        workdir=tmp_path,
+        max_flow_failures=1,
+        halt_on_max_failures=False,
+    )
+
+    assert len(results) == len(flow_configs)
+    for _, path, flow_dir in results:
+        assert path is not None
+        assert "errors" in str(path)
+        assert (flow_dir / "flow_failed.txt").exists()
+
+
+def test_cli_ignore_max_failures_flag(tmp_path):
+    cmd = f"{shlex.quote(sys.executable)} -c {shlex.quote('import sys; sys.stderr.write("boom\\n"); sys.exit(1)')}"
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps([{"type": "cmd", "cmd": cmd}]),
+        encoding="utf-8",
+    )
+
+    script_path = Path(orchestrator.__file__).resolve()
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(script_path),
+            str(config_path),
+            "--workdir",
+            str(tmp_path),
+            "--max-flow-failures",
+            "1",
+            "--ignore-max-failures",
+            "--hide-flow-paths",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0
+    assert "boom" in result.stderr
+    assert "errors" in result.stdout
+    assert "Maximum flow failures reached" not in result.stdout

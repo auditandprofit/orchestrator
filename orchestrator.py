@@ -190,17 +190,24 @@ def _run_flow(
             threads: List[threading.Thread] = []
             res_lock = threading.Lock()
 
+            cancelled = False
+
             for i, item in enumerate(items):
                 branch_dir = curr_dir / f"branch_{i}"
                 branch_dir.mkdir(parents=True, exist_ok=True)
                 item_str = json.dumps(item) if not isinstance(item, str) else item
 
                 def worker(s=item_str, bdir=branch_dir):
+                    nonlocal cancelled
                     if cancel_event and cancel_event.is_set():
+                        cancelled = True
+                        mark_failed()
                         return
                     try:
                         branch_res = run_from(idx + 1, s, None, bdir)
                     except FlowCancelled:
+                        cancelled = True
+                        mark_failed()
                         return
                     with res_lock:
                         results.extend(branch_res)
@@ -212,11 +219,20 @@ def _run_flow(
             for t in threads:
                 t.join()
 
+            if cancelled:
+                raise FlowCancelled()
+
             return results
 
         return run_from(idx + 1, output, path, curr_dir)
 
-    results = run_from(0, "", None, flow_dir)
+    try:
+        results = run_from(0, "", None, flow_dir)
+    except FlowCancelled:
+        mark_failed()
+        failure_marker = flow_dir / "flow_failed.txt"
+        failure_marker.write_text("Flow failed", encoding="utf-8")
+        raise
     if flow_failed:
         failure_marker = flow_dir / "flow_failed.txt"
         failure_marker.write_text("Flow failed", encoding="utf-8")

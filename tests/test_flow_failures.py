@@ -273,6 +273,68 @@ def test_finished_file_records_flow_status(tmp_path, monkeypatch):
     assert lines == [f"done {success_cmd}", f"failed {fail_cmd}"]
 
 
+def test_cancelled_branch_flow_is_marked_failed(tmp_path, monkeypatch):
+    array_script = tmp_path / "array_script.py"
+    array_script.write_text(
+        "import json\nprint(json.dumps(['branch']))\n", encoding="utf-8"
+    )
+
+    slow_script = tmp_path / "slow_script.py"
+    slow_script.write_text(
+        (
+            "import sys\nimport time\n"
+            "time.sleep(0.3)\n"
+            "print('slow-done')\n"
+        ),
+        encoding="utf-8",
+    )
+
+    fail_script = tmp_path / "fail_script.py"
+    fail_script.write_text(
+        "import time\nimport sys\ntime.sleep(0.1)\nsys.exit(1)\n",
+        encoding="utf-8",
+    )
+
+    array_cmd = f"{shlex.quote(sys.executable)} {shlex.quote(str(array_script))}"
+    slow_cmd = f"{shlex.quote(sys.executable)} {shlex.quote(str(slow_script))}"
+    fail_cmd = f"{shlex.quote(sys.executable)} {shlex.quote(str(fail_script))}"
+
+    base_config = [
+        {"type": "cmd", "cmd": array_cmd, "array": True},
+        {"type": "cmd", "cmd": slow_cmd},
+    ]
+
+    flow_fail = _copy_flow(base_config)
+    flow_fail[1]["cmd"] = fail_cmd
+    flow_slow = _copy_flow(base_config)
+
+    monkeypatch.setattr(orchestrator, "GENERATED_DIR", tmp_path)
+
+    with pytest.raises(orchestrator.MaxFlowFailuresExceeded):
+        orchestrator.orchestrate(
+            base_config,
+            [flow_fail, flow_slow],
+            parallel=2,
+            workdir=tmp_path,
+            max_flow_failures=1,
+        )
+
+    run_dirs = list(tmp_path.glob("run_*"))
+    assert len(run_dirs) == 1
+    run_dir = run_dirs[0]
+
+    finished_file = run_dir / "finished.txt"
+    assert finished_file.exists()
+    lines = finished_file.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    assert all(line.startswith("failed") for line in lines)
+
+    flow_dirs = list(run_dir.glob("flow_*"))
+    assert len(flow_dirs) == 2
+    for flow_dir in flow_dirs:
+        assert (flow_dir / "flow_failed.txt").exists()
+
+
 def test_cli_ignore_max_failures_flag(tmp_path):
     cmd = f"{shlex.quote(sys.executable)} -c {shlex.quote('import sys; sys.stderr.write("boom\\n"); sys.exit(1)')}"
     config_path = tmp_path / "config.json"

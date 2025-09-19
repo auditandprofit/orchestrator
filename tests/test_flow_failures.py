@@ -105,6 +105,52 @@ def test_cmd_failure_forwards_stderr(tmp_path, capsys):
     assert "boom" in captured.err
 
 
+def test_cmd_failure_writes_stderr_file(tmp_path):
+    script = tmp_path / "failing_script.py"
+    script.write_text(
+        "import sys\nsys.stderr.write('boom\\n')\nsys.exit(3)\n",
+        encoding="utf-8",
+    )
+    cmd = f"{shlex.quote(sys.executable)} {shlex.quote(str(script))}"
+    config = [{"type": "cmd", "cmd": cmd}]
+
+    results, failed = orchestrator._run_flow(
+        config, [0], threading.Lock(), tmp_path, tmp_path
+    )
+
+    assert failed
+    error_file = results[0][1]
+    assert error_file is not None
+    stderr_file = error_file.with_name(f"{error_file.stem}_stderr.txt")
+    assert stderr_file.exists()
+    content = stderr_file.read_text(encoding="utf-8")
+    assert "exit_code: 3" in content
+    assert "boom" in content
+
+
+def test_codex_failure_writes_stderr_file(tmp_path, monkeypatch):
+    def fake_run_codex_cli(prompt, workdir, output_dir, max_retries=3, timeout=None):
+        err = subprocess.CalledProcessError(2, ["codex", "exec"], stderr="codex boom\n")
+        raise Exception("codex boom") from err
+
+    monkeypatch.setattr(orchestrator, "run_codex_cli", fake_run_codex_cli)
+
+    config = [{"type": "codex", "prompt": ""}]
+
+    results, failed = orchestrator._run_flow(
+        config, [0], threading.Lock(), tmp_path, tmp_path
+    )
+
+    assert failed
+    error_file = results[0][1]
+    assert error_file is not None
+    stderr_file = error_file.with_name(f"{error_file.stem}_stderr.txt")
+    assert stderr_file.exists()
+    content = stderr_file.read_text(encoding="utf-8")
+    assert "exit_code: 2" in content
+    assert "codex boom" in content
+
+
 def test_orchestrate_can_ignore_max_failures(tmp_path, monkeypatch):
     base_config = [{"type": "cmd", "cmd": "false"}]
     flow_configs = [_copy_flow(base_config) for _ in range(3)]

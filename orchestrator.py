@@ -369,10 +369,12 @@ def orchestrate(
                 cancel_event,
             )
         except FlowCancelled:
+            record_finished("failed", interpolated_paths)
             with progress_lock:
                 finished += 1
             return
 
+        status = "failed" if flow_failed else "done"
         success_paths: List[Path] = []
         if (
             list_codex_final_paths
@@ -399,6 +401,7 @@ def orchestrate(
                         cancel_message_printed = True
                         trigger_message = True
 
+        record_finished(status, interpolated_paths)
         for path in success_paths:
             try:
                 print(path.resolve(), flush=True)
@@ -436,6 +439,17 @@ def orchestrate(
         print(display)
 
     run_dir = Path(tempfile.mkdtemp(prefix="run_", dir=GENERATED_DIR))
+
+    finished_file = run_dir / "finished.txt"
+    finished_file.touch()
+    finished_lock = threading.Lock()
+
+    def record_finished(status: str, interpolated_paths: Tuple[str, ...]) -> None:
+        parts = ", ".join(interpolated_paths)
+        line = status if not parts else f"{status} {parts}"
+        with finished_lock:
+            with finished_file.open("a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
 
     threads: List[threading.Thread] = []
     monitor_thread = threading.Thread(target=monitor)

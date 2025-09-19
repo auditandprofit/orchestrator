@@ -242,6 +242,37 @@ def test_failed_files_multiple_keys(tmp_path, monkeypatch):
     assert lines == [f"{first_path},{second_path}"]
 
 
+def test_finished_file_records_flow_status(tmp_path, monkeypatch):
+    success_cmd = tmp_path / "success_cmd.txt"
+    success_cmd.write_text("printf success", encoding="utf-8")
+    fail_cmd = tmp_path / "fail_cmd.txt"
+    fail_cmd.write_text("false", encoding="utf-8")
+
+    cmd_list = tmp_path / "cmds.txt"
+    cmd_list.write_text(f"{success_cmd}\n{fail_cmd}\n", encoding="utf-8")
+
+    base_config = [{"type": "cmd", "cmd": "{{{cmd}}}"}]
+    flows = orchestrator._generate_flow_configs(base_config, {"cmd": cmd_list})
+
+    monkeypatch.setattr(orchestrator, "GENERATED_DIR", tmp_path)
+
+    orchestrator.orchestrate(
+        base_config,
+        flows,
+        parallel=1,
+        workdir=tmp_path,
+        print_flow_paths=False,
+        max_flow_failures=2,
+    )
+
+    run_dirs = list(tmp_path.glob("run_*"))
+    assert len(run_dirs) == 1
+    finished_file = run_dirs[0] / "finished.txt"
+    assert finished_file.exists()
+    lines = finished_file.read_text(encoding="utf-8").splitlines()
+    assert lines == [f"done {success_cmd}", f"failed {fail_cmd}"]
+
+
 def test_cli_ignore_max_failures_flag(tmp_path):
     cmd = f"{shlex.quote(sys.executable)} -c {shlex.quote('import sys; sys.stderr.write("boom\\n"); sys.exit(1)')}"
     config_path = tmp_path / "config.json"

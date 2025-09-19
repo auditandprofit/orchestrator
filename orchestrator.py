@@ -3,7 +3,7 @@ import json
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 import tempfile
 import traceback
 import subprocess
@@ -18,6 +18,20 @@ class FlowCancelled(Exception):
 
 class MaxFlowFailuresExceeded(Exception):
     """Raised when the maximum number of flow failures has been reached."""
+
+
+class FlowConfig(list):
+    """Represents a generated flow along with metadata about its inputs."""
+
+    def __init__(
+        self,
+        steps: Iterable[Dict[str, Any]],
+        interpolated_paths: Optional[Iterable[str]] = None,
+    ) -> None:
+        super().__init__(steps)
+        self.interpolated_paths: Tuple[str, ...] = tuple(
+            interpolated_paths or ()
+        )
 
 
 def _run_flow(
@@ -178,7 +192,7 @@ def _generate_flow_configs(
     base_config: List[Dict[str, Any]],
     key_files: Dict[str, Path],
     append_filepath: bool = False,
-) -> List[List[Dict[str, Any]]]:
+) -> List[FlowConfig]:
     """Expand a base configuration into multiple flows via placeholder files.
 
     Placeholders in prompts must be wrapped with triple braces, e.g. ``{{{name}}}``.
@@ -187,27 +201,32 @@ def _generate_flow_configs(
     """
 
     if not key_files:
-        return [base_config]
+        return [FlowConfig((dict(step) for step in base_config))]
 
-    loaded: Dict[str, List[str]] = {}
+    loaded: Dict[str, List[Tuple[str, str]]] = {}
 
     for key, file_path in key_files.items():
         with file_path.open("r", encoding="utf-8") as f:
             paths = [line.strip() for line in f.readlines() if line.strip()]
-        contents: List[str] = []
+        entries: List[Tuple[str, str]] = []
         for p in paths:
             text = Path(p).read_text(encoding="utf-8")
             if append_filepath:
                 text = text.rstrip("\n") + f"\n{p}"
-            contents.append(text)
-        loaded[key] = contents
+            entries.append((p, text))
+        loaded[key] = entries
 
     keys = list(loaded.keys())
     values_product = itertools.product(*(loaded[k] for k in keys))
-    flow_configs: List[List[Dict[str, Any]]] = []
+    flow_configs: List[FlowConfig] = []
 
     for combo in values_product:
-        mapping = dict(zip(keys, combo))
+        mapping: Dict[str, str] = {}
+        combo_paths: List[str] = []
+        for key, (path_str, value) in zip(keys, combo):
+            mapping[key] = value
+            combo_paths.append(path_str)
+
         flow: List[Dict[str, Any]] = []
         for step in base_config:
             new_step = dict(step)
@@ -231,7 +250,7 @@ def _generate_flow_configs(
             if cmd_str is not None:
                 new_step["cmd"] = cmd_str
             flow.append(new_step)
-        flow_configs.append(flow)
+        flow_configs.append(FlowConfig(flow, combo_paths))
 
     return flow_configs
 
@@ -296,8 +315,13 @@ def orchestrate(
     failed_flows = 0
     cancel_event = threading.Event()
     cancel_message_printed = False
+    failed_flow_paths: List[Tuple[str, ...]] = []
 
-    def worker(flow_conf: List[Dict[str, Any]], flow_dir: Path):
+    def worker(
+        flow_conf: List[Dict[str, Any]],
+        flow_dir: Path,
+        interpolated_paths: Tuple[str, ...],
+    ) -> None:
         nonlocal finished, failed_flows, cancel_message_printed
         try:
             branch_results, flow_failed = _run_flow(
@@ -332,6 +356,8 @@ def orchestrate(
             finished += 1
             if flow_failed:
                 failed_flows += 1
+                if interpolated_paths:
+                    failed_flow_paths.append(interpolated_paths)
                 if halt_on_max_failures and failed_flows >= max_flow_failures:
                     cancel_event.set()
                     if not cancel_message_printed:
@@ -386,13 +412,17 @@ def orchestrate(
         flow_dir = Path(tempfile.mkdtemp(prefix="flow_", dir=run_dir))
         if print_flow_paths:
             print(flow_dir.resolve())
+        interpolated_paths = getattr(flow_conf, "interpolated_paths", tuple())
         while True:
             if cancel_event.is_set():
                 break
             with progress_lock:
                 active = len([t for t in threads if t.is_alive()])
             if active < parallel:
-                t = threading.Thread(target=worker, args=(flow_conf, flow_dir))
+                t = threading.Thread(
+                    target=worker,
+                    args=(flow_conf, flow_dir, tuple(interpolated_paths)),
+                )
                 threads.append(t)
                 t.start()
                 break
@@ -406,6 +436,13 @@ def orchestrate(
 
     stop_event.set()
     monitor_thread.join()
+
+    if failed_flows:
+        failed_file = run_dir / "failed_files"
+        with failed_file.open("w", encoding="utf-8") as fh:
+            for paths in failed_flow_paths:
+                fh.write(",".join(paths))
+                fh.write("\n")
 
     if (
         halt_on_max_failures

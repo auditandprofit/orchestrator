@@ -82,6 +82,12 @@ with open("generated/run_xxxx/flow_xxxx/codex_exec_xxxx/final_message.txt") as f
 
 Each flow directory is left intact for logging.
 
+The orchestrator stops scheduling new flows once the number of failed flows
+reaches the `--max-flow-failures` threshold (default `3`) and exits with a
+non-zero code. Pass `--ignore-max-failures` to keep running remaining flows and
+receive the full set of results even if more than the configured number of
+flows fail.
+
 ### Branching with arrays
 
 Add an `"array": true` field to any step that is expected to produce a JSON

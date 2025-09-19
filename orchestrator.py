@@ -245,6 +245,7 @@ def orchestrate(
     max_flow_failures: int = 3,
     print_flow_paths: bool = True,
     list_codex_final_paths: bool = False,
+    halt_on_max_failures: bool = True,
 ) -> List[Tuple[str, Optional[Path], Path]]:
     """Execute multiple flows with a concurrency cap while logging active counts.
 
@@ -268,6 +269,11 @@ def orchestrate(
         list_codex_final_paths: When ``True``, print the absolute path to each
             Codex final message file as flows finish, provided the final step is
             a Codex job and the flow completed successfully.
+        halt_on_max_failures: When ``True`` (default), stop scheduling new
+            flows and raise :class:`MaxFlowFailuresExceeded` once
+            ``max_flow_failures`` is reached. When ``False``, the orchestrator
+            continues running remaining flows and returns all results even if
+            the failure threshold is exceeded.
 
     Raises:
         MaxFlowFailuresExceeded: When the number of failed flows reaches the
@@ -326,7 +332,7 @@ def orchestrate(
             finished += 1
             if flow_failed:
                 failed_flows += 1
-                if failed_flows >= max_flow_failures:
+                if halt_on_max_failures and failed_flows >= max_flow_failures:
                     cancel_event.set()
                     if not cancel_message_printed:
                         cancel_message_printed = True
@@ -401,7 +407,11 @@ def orchestrate(
     stop_event.set()
     monitor_thread.join()
 
-    if cancel_event.is_set() and failed_flows >= max_flow_failures:
+    if (
+        halt_on_max_failures
+        and cancel_event.is_set()
+        and failed_flows >= max_flow_failures
+    ):
         if not cancel_message_printed:
             print("Maximum flow failures reached", flush=True)
         raise MaxFlowFailuresExceeded("Maximum flow failures reached")
@@ -438,6 +448,14 @@ if __name__ == "__main__":
         type=int,
         default=3,
         help="Maximum number of flow failures allowed before cancelling execution",
+    )
+    parser.add_argument(
+        "--ignore-max-failures",
+        action="store_true",
+        help=(
+            "Continue running flows even after reaching the max failure "
+            "threshold; disables the fail-fast behaviour"
+        ),
     )
     parser.add_argument(
         "--workdir",
@@ -489,6 +507,7 @@ if __name__ == "__main__":
             max_flow_failures=args.max_flow_failures,
             print_flow_paths=not args.hide_flow_paths,
             list_codex_final_paths=args.list_final_message_paths,
+            halt_on_max_failures=not args.ignore_max_failures,
         )
     except MaxFlowFailuresExceeded:
         sys.exit(1)

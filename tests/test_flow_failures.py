@@ -127,6 +127,75 @@ def test_orchestrate_can_ignore_max_failures(tmp_path, monkeypatch):
         assert (flow_dir / "flow_failed.txt").exists()
 
 
+def test_failed_files_logs_interpolated_paths(tmp_path, monkeypatch):
+    file_a = tmp_path / "a.txt"
+    file_a.write_text("a", encoding="utf-8")
+    file_b = tmp_path / "b.txt"
+    file_b.write_text("b", encoding="utf-8")
+
+    file_list = tmp_path / "files.txt"
+    file_list.write_text(f"{file_a}\n{file_b}\n", encoding="utf-8")
+
+    base_config = [{"type": "cmd", "cmd": "false"}]
+    flows = orchestrator._generate_flow_configs(base_config, {"name": file_list})
+
+    monkeypatch.setattr(orchestrator, "GENERATED_DIR", tmp_path)
+
+    with pytest.raises(orchestrator.MaxFlowFailuresExceeded):
+        orchestrator.orchestrate(
+            base_config,
+            flows,
+            parallel=1,
+            workdir=tmp_path,
+            max_flow_failures=1,
+        )
+
+    run_dirs = list(tmp_path.glob("run_*"))
+    assert len(run_dirs) == 1
+    failed_file = run_dirs[0] / "failed_files"
+    assert failed_file.exists()
+
+    lines = failed_file.read_text(encoding="utf-8").splitlines()
+    assert lines == [str(file_a)]
+
+
+def test_failed_files_multiple_keys(tmp_path, monkeypatch):
+    first_path = tmp_path / "first.txt"
+    first_path.write_text("first", encoding="utf-8")
+    second_path = tmp_path / "second.txt"
+    second_path.write_text("second", encoding="utf-8")
+
+    first_list = tmp_path / "first_list.txt"
+    first_list.write_text(f"{first_path}\n", encoding="utf-8")
+    second_list = tmp_path / "second_list.txt"
+    second_list.write_text(f"{second_path}\n", encoding="utf-8")
+
+    base_config = [{"type": "cmd", "cmd": "false"}]
+    flows = orchestrator._generate_flow_configs(
+        base_config,
+        {"alpha": first_list, "beta": second_list},
+    )
+
+    monkeypatch.setattr(orchestrator, "GENERATED_DIR", tmp_path)
+
+    orchestrator.orchestrate(
+        base_config,
+        flows,
+        parallel=1,
+        workdir=tmp_path,
+        max_flow_failures=1,
+        halt_on_max_failures=False,
+    )
+
+    run_dirs = list(tmp_path.glob("run_*"))
+    assert len(run_dirs) == 1
+    failed_file = run_dirs[0] / "failed_files"
+    assert failed_file.exists()
+
+    lines = failed_file.read_text(encoding="utf-8").splitlines()
+    assert lines == [f"{first_path},{second_path}"]
+
+
 def test_cli_ignore_max_failures_flag(tmp_path):
     cmd = f"{shlex.quote(sys.executable)} -c {shlex.quote('import sys; sys.stderr.write("boom\\n"); sys.exit(1)')}"
     config_path = tmp_path / "config.json"

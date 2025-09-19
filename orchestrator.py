@@ -110,10 +110,35 @@ def _run_flow(
             else:
                 raise ValueError(f"Unknown step type: {step_type}")
         except Exception as e:
-            if isinstance(e, subprocess.CalledProcessError) and e.stderr:
+            called_process_error: Optional[subprocess.CalledProcessError] = None
+            if isinstance(e, subprocess.CalledProcessError):
+                called_process_error = e
+            else:
+                cause = getattr(e, "__cause__", None)
+                if isinstance(cause, subprocess.CalledProcessError):
+                    called_process_error = cause
+
+            stderr_text: Optional[str] = None
+            exit_code: Optional[int] = None
+
+            if called_process_error is not None:
+                exit_code = called_process_error.returncode
+                if called_process_error.stderr:
+                    stderr_text = str(called_process_error.stderr)
+            else:
+                exit_code = getattr(e, "returncode", None)
+                stderr_attr = getattr(e, "stderr", None)
+                if stderr_attr:
+                    stderr_text = str(stderr_attr)
+
+            stderr_to_log = stderr_text
+            if not stderr_to_log and isinstance(e, subprocess.CalledProcessError):
+                stderr_to_log = str(getattr(e, "stderr", "")) or None
+
+            if stderr_to_log:
                 try:
-                    sys.stderr.write(e.stderr)
-                    if not e.stderr.endswith("\n"):
+                    sys.stderr.write(stderr_to_log)
+                    if not stderr_to_log.endswith("\n"):
                         sys.stderr.write("\n")
                     sys.stderr.flush()
                 except Exception:
@@ -127,6 +152,16 @@ def _run_flow(
                 f"{type(e).__name__}: {e}\n{traceback.format_exc()}",
                 encoding="utf-8",
             )
+            if stderr_text is not None or exit_code is not None:
+                stderr_file = err_dir / f"step_{idx}_{step_type}_stderr.txt"
+                exit_code_str = "unknown" if exit_code is None else str(exit_code)
+                stderr_content = stderr_text or ""
+                if stderr_content and not stderr_content.endswith("\n"):
+                    stderr_content += "\n"
+                stderr_file.write_text(
+                    f"exit_code: {exit_code_str}\n{stderr_content}",
+                    encoding="utf-8",
+                )
             output = ""
             path = error_file
             return [(output, path, curr_dir)]

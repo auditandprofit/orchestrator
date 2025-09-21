@@ -9,7 +9,7 @@ item requires a `type` (`"codex"` or `"openai"`) and either a `prompt` or a
 `prmpt_file` pointing to a file containing the prompt. You can optionally
 include a `name` to use in the live progress output instead of the step type.
 For OpenAI stages, set `"web_search": true` to enable the hosted web search
-tool when generating a response.
+preview tool when generating a response.
 Steps may also include a `cmd` field to run an arbitrary shell
 command; the previous step's output is piped to the command's standard input and
 its standard output is passed to the next step.

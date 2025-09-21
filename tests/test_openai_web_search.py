@@ -1,5 +1,5 @@
+import json
 import threading
-
 from types import SimpleNamespace
 
 import orchestrator
@@ -47,12 +47,25 @@ def test_openai_web_search_flag(tmp_path, monkeypatch):
 
     assert not failed
     assert len(res) == 1
+    assert res[0][1] == flow_dir / "step_1_openai.txt"
     assert len(calls) == 2
     assert calls[0]["web_search"] is True
     assert calls[1]["web_search"] is False
     assert calls[0]["model"] is None
     assert calls[0]["reasoning_effort"] is None
     assert calls[0]["service_tier"] is None
+
+    first_text_path = flow_dir / "step_0_openai.txt"
+    second_text_path = flow_dir / "step_1_openai.txt"
+    assert first_text_path.read_text(encoding="utf-8") == "First"
+    assert second_text_path.read_text(encoding="utf-8") == "Second\nFirst"
+
+    first_response_path = flow_dir / "step_0_openai_response.json"
+    second_response_path = flow_dir / "step_1_openai_response.json"
+    first_response = json.loads(first_response_path.read_text(encoding="utf-8"))
+    second_response = json.loads(second_response_path.read_text(encoding="utf-8"))
+    assert first_response["output"][0]["content"][0]["text"] == "First"
+    assert second_response["output"][0]["content"][0]["text"] == "Second\nFirst"
 
 
 def test_openai_request_options_forwarding(tmp_path, monkeypatch):
@@ -98,6 +111,7 @@ def test_openai_request_options_forwarding(tmp_path, monkeypatch):
 
     assert not failed
     assert res[0][0] == "Hello"
+    assert res[0][1] == flow_dir / "step_0_openai.txt"
     assert len(calls) == 1
     call = calls[0]
     assert call["model"] == "gpt-test"

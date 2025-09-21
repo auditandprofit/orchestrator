@@ -105,7 +105,22 @@ def _run_flow(
                     .get("content", [{}])[0]
                     .get("text", "")
                 )
-                path = None
+                response_path = curr_dir / f"step_{idx}_openai_response.json"
+                try:
+                    response_path.write_text(
+                        json.dumps(
+                            response,
+                            ensure_ascii=False,
+                            indent=2,
+                            default=str,
+                        ),
+                        encoding="utf-8",
+                    )
+                except TypeError:
+                    # Fallback to storing a string representation if JSON encoding fails.
+                    response_path.write_text(str(response), encoding="utf-8")
+                path = curr_dir / f"step_{idx}_openai.txt"
+                path.write_text(output, encoding="utf-8")
             elif "cmd" in step:
                 completed = subprocess.run(
                     step["cmd"],

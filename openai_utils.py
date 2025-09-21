@@ -174,11 +174,17 @@ def run_codex_cli(
             raise
 
 
-def call_openai_api(prompt: str, max_retries: int = 3) -> dict:
+def call_openai_api(
+    prompt: str,
+    *,
+    web_search: bool = False,
+    max_retries: int = 3,
+) -> dict:
     """Call the OpenAI Responses API with retry logic on network errors.
 
     Args:
         prompt: Prompt string for the response request.
+        web_search: When ``True``, enable hosted web search for the response.
         max_retries: Maximum number of retries on network-related errors.
 
     Returns:
@@ -193,7 +199,10 @@ def call_openai_api(prompt: str, max_retries: int = 3) -> dict:
 
     for attempt in range(max_retries):
         try:
-            response = client.responses.create(model="gpt-4o-mini", input=prompt)
+            request_args = {"model": "gpt-4o-mini", "input": prompt}
+            if web_search:
+                request_args["tools"] = [{"type": "web_search"}]
+            response = client.responses.create(**request_args)
             return response.model_dump()
         except NETWORK_EXCEPTIONS:
             if attempt == max_retries - 1:

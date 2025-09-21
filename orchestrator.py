@@ -87,7 +87,8 @@ def _run_flow(
                     prompt, workdir, curr_dir, timeout=codex_timeout
                 )
             elif step_type == "openai":
-                response = call_openai_api(prompt)
+                web_search_enabled = step.get("web_search") is True
+                response = call_openai_api(prompt, web_search=web_search_enabled)
                 output = (
                     response.get("output", [{}])[0]
                     .get("content", [{}])[0]

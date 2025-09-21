@@ -42,6 +42,7 @@ def _run_flow(
     flow_dir: Path,
     codex_timeout: Optional[int] = None,
     cancel_event: Optional[threading.Event] = None,
+    openai_request_options: Optional[Dict[str, Optional[str]]] = None,
 ) -> Tuple[List[Tuple[str, Optional[Path], Path]], bool]:
     """Execute a single flow defined in ``config``.
 
@@ -88,7 +89,17 @@ def _run_flow(
                 )
             elif step_type == "openai":
                 web_search_enabled = step.get("web_search") is True
-                response = call_openai_api(prompt, web_search=web_search_enabled)
+                openai_kwargs: Dict[str, str] = {}
+                if openai_request_options:
+                    for key in ("model", "service_tier", "reasoning_effort"):
+                        value = openai_request_options.get(key)
+                        if value:
+                            openai_kwargs[key] = value
+                response = call_openai_api(
+                    prompt,
+                    web_search=web_search_enabled,
+                    **openai_kwargs,
+                )
                 output = (
                     response.get("output", [{}])[0]
                     .get("content", [{}])[0]
@@ -317,6 +328,7 @@ def orchestrate(
     print_flow_paths: bool = True,
     list_codex_final_paths: bool = False,
     halt_on_max_failures: bool = True,
+    openai_request_options: Optional[Dict[str, Optional[str]]] = None,
 ) -> List[Tuple[str, Optional[Path], Path]]:
     """Execute multiple flows with a concurrency cap while logging active counts.
 
@@ -345,6 +357,9 @@ def orchestrate(
             ``max_flow_failures`` is reached. When ``False``, the orchestrator
             continues running remaining flows and returns all results even if
             the failure threshold is exceeded.
+        openai_request_options: Optional overrides for OpenAI steps, such as
+            ``model``, ``service_tier``, and ``reasoning_effort``. When not
+            provided, defaults built into :func:`call_openai_api` are used.
 
     Raises:
         MaxFlowFailuresExceeded: When the number of failed flows reaches the
@@ -382,8 +397,9 @@ def orchestrate(
                 step_lock,
                 workdir,
                 flow_dir,
-                codex_timeout,
-                cancel_event,
+                codex_timeout=codex_timeout,
+                cancel_event=cancel_event,
+                openai_request_options=openai_request_options,
             )
         except FlowCancelled:
             record_finished("failed", interpolated_paths)
@@ -572,6 +588,26 @@ if __name__ == "__main__":
         help="Timeout in seconds for each codex CLI invocation",
     )
     parser.add_argument(
+        "--openai-model",
+        default=None,
+        help=(
+            "Model identifier to use for OpenAI steps. Defaults to the value "
+            "configured in call_openai_api when not provided."
+        ),
+    )
+    parser.add_argument(
+        "--openai-service-tier",
+        default=None,
+        help="Service tier to request for OpenAI steps (for example, 'default' or 'scale')",
+    )
+    parser.add_argument(
+        "--openai-reasoning-effort",
+        default=None,
+        help=(
+            "Reasoning effort level for OpenAI steps (for example, 'medium' or 'high')"
+        ),
+    )
+    parser.add_argument(
         "--hide-flow-paths",
         action="store_true",
         help="Suppress printing the generated flow directory paths",
@@ -600,6 +636,18 @@ if __name__ == "__main__":
         config, key_files, append_filepath=args.append_filepath
     )
 
+    openai_request_options = {
+        key: value
+        for key, value in {
+            "model": args.openai_model,
+            "service_tier": args.openai_service_tier,
+            "reasoning_effort": args.openai_reasoning_effort,
+        }.items()
+        if value is not None
+    }
+    if not openai_request_options:
+        openai_request_options = None
+
     try:
         results = orchestrate(
             config,
@@ -611,6 +659,7 @@ if __name__ == "__main__":
             print_flow_paths=not args.hide_flow_paths,
             list_codex_final_paths=args.list_final_message_paths,
             halt_on_max_failures=not args.ignore_max_failures,
+            openai_request_options=openai_request_options,
         )
     except MaxFlowFailuresExceeded:
         sys.exit(1)

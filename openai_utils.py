@@ -179,6 +179,9 @@ def call_openai_api(
     *,
     web_search: bool = False,
     max_retries: int = 3,
+    model: Optional[str] = None,
+    reasoning_effort: Optional[str] = None,
+    service_tier: Optional[str] = None,
 ) -> dict:
     """Call the OpenAI Responses API with retry logic on network errors.
 
@@ -199,7 +202,11 @@ def call_openai_api(
 
     for attempt in range(max_retries):
         try:
-            request_args = {"model": "gpt-4o-mini", "input": prompt}
+            request_args = {"model": model or "gpt-4o-mini", "input": prompt}
+            if reasoning_effort:
+                request_args["reasoning"] = {"effort": reasoning_effort}
+            if service_tier:
+                request_args["service_tier"] = service_tier
             if web_search:
                 request_args["tools"] = [{"type": "web_search"}]
             response = client.responses.create(**request_args)

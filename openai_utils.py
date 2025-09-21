@@ -22,14 +22,20 @@ try:
         APITimeoutError,
         APIStatusError,
         OpenAI,
+        OpenAIError,
     )
+    try:
+        from openai.types.responses import WebSearchTool
+    except Exception:  # pragma: no cover - best-effort import for optional dependency
+        WebSearchTool = None  # type: ignore[assignment]
 except ModuleNotFoundError:
     OpenAI = None  # type: ignore[assignment]
 
     class _MissingOpenAIError(Exception):
         """Fallback error type when the openai package is unavailable."""
 
-    APIConnectionError = APITimeoutError = APIStatusError = _MissingOpenAIError  # type: ignore[assignment]
+    APIConnectionError = APITimeoutError = APIStatusError = OpenAIError = _MissingOpenAIError  # type: ignore[assignment]
+    WebSearchTool = None  # type: ignore[assignment]
     _OPENAI_AVAILABLE = False
 else:
     _OPENAI_AVAILABLE = True
@@ -49,7 +55,12 @@ class CodexTimeoutError(Exception):
     """Custom exception for codex CLI timeouts."""
 
 
-client = OpenAI() if _OPENAI_AVAILABLE else None
+client = None
+if _OPENAI_AVAILABLE:
+    try:
+        client = OpenAI()
+    except OpenAIError:
+        client = None
 
 NETWORK_EXCEPTIONS = (
     requests.exceptions.RequestException,
@@ -198,7 +209,14 @@ def call_openai_api(
         Exception: Any other exception is raised immediately.
     """
     if client is None:
-        raise ModuleNotFoundError("openai package is required to call the OpenAI API")
+        if not _OPENAI_AVAILABLE:
+            raise ModuleNotFoundError(
+                "openai package is required to call the OpenAI API"
+            )
+        raise RuntimeError(
+            "OpenAI client is not configured. Set the OPENAI_API_KEY environment "
+            "variable or provide an API key when constructing the client."
+        )
 
     for attempt in range(max_retries):
         try:
@@ -208,7 +226,10 @@ def call_openai_api(
             if service_tier:
                 request_args["service_tier"] = service_tier
             if web_search:
-                request_args["tools"] = [{"type": "web_search"}]
+                if WebSearchTool is not None:
+                    request_args["tools"] = [WebSearchTool(type="web_search")]
+                else:  # pragma: no cover - fallback for older openai versions
+                    request_args["tools"] = [{"type": "web_search"}]
             response = client.responses.create(**request_args)
             return response.model_dump()
         except NETWORK_EXCEPTIONS:

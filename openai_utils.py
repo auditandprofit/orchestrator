@@ -198,7 +198,7 @@ def call_openai_api(
 
     Args:
         prompt: Prompt string for the response request.
-        web_search: When ``True``, enable hosted web search for the response.
+        web_search: When ``True``, enable hosted web search preview for the response.
         max_retries: Maximum number of retries on network-related errors.
 
     Returns:
@@ -227,9 +227,11 @@ def call_openai_api(
                 request_args["service_tier"] = service_tier
             if web_search:
                 if WebSearchTool is not None:
-                    request_args["tools"] = [WebSearchTool(type="web_search")]
+                    request_args["tools"] = [
+                        WebSearchTool(type="web_search_preview")
+                    ]
                 else:  # pragma: no cover - fallback for older openai versions
-                    request_args["tools"] = [{"type": "web_search"}]
+                    request_args["tools"] = [{"type": "web_search_preview"}]
             response = client.responses.create(**request_args)
             return response.model_dump()
         except NETWORK_EXCEPTIONS:

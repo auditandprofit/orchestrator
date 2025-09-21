@@ -4,7 +4,8 @@ from pathlib import Path
 import orchestrator
 
 
-def fake_api(prompt: str) -> dict:
+def fake_api(prompt: str, *, web_search: bool = False, max_retries: int = 3) -> dict:
+    assert not web_search
     return {"output": [{"content": [{"text": prompt}]}]}
 
 

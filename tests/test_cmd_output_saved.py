@@ -37,3 +37,33 @@ def test_cmd_respects_process_cwd(tmp_path, monkeypatch):
 
     assert not failed
     assert results[0][0] == "hello"
+
+
+def test_cmd_inputs_can_select_named_steps(tmp_path):
+    config = [
+        {"type": "cmd", "cmd": "printf alpha", "name": "first"},
+        {"type": "cmd", "cmd": "printf beta", "name": "second"},
+        {"type": "cmd", "cmd": "cat", "inputs": ["second", "first"]},
+    ]
+
+    results, failed = orchestrator._run_flow(
+        config, [0, 0, 0], threading.Lock(), tmp_path, tmp_path
+    )
+
+    assert not failed
+    assert results[0][0] == "beta\nalpha"
+
+
+def test_cmd_inputs_accept_step_indexes(tmp_path):
+    config = [
+        {"type": "cmd", "cmd": "printf foo"},
+        {"type": "cmd", "cmd": "printf bar"},
+        {"type": "cmd", "cmd": "cat", "inputs": [1, 0]},
+    ]
+
+    results, failed = orchestrator._run_flow(
+        config, [0, 0, 0], threading.Lock(), tmp_path, tmp_path
+    )
+
+    assert not failed
+    assert results[0][0] == "bar\nfoo"

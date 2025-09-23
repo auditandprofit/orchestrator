@@ -3,7 +3,7 @@ import json
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 import tempfile
 import traceback
 import subprocess
@@ -61,8 +61,77 @@ def _run_flow(
         nonlocal flow_failed
         flow_failed = True
 
+    def with_recorded_output(
+        outputs: Dict[str, str],
+        step: Dict[str, Any],
+        step_idx: int,
+        value: str,
+    ) -> Dict[str, str]:
+        updated = dict(outputs)
+        step_name = step.get("name")
+        if isinstance(step_name, str) and step_name:
+            updated[step_name] = value
+        idx_key = str(step_idx)
+        updated[idx_key] = value
+        updated[f"step_{idx_key}"] = value
+        return updated
+
+    def resolve_step_inputs(
+        step: Dict[str, Any],
+        step_idx: int,
+        outputs: Dict[str, str],
+        default: str,
+    ) -> str:
+        raw_inputs = step.get("inputs")
+        if raw_inputs is None:
+            return default
+
+        if isinstance(raw_inputs, (str, bytes, int)):
+            references: List[Any] = [raw_inputs]
+        else:
+            try:
+                references = list(raw_inputs)
+            except TypeError as exc:  # pragma: no cover - defensive, should not occur
+                raise ValueError("inputs must be iterable") from exc
+
+        combined: List[str] = []
+        for ref in references:
+            if isinstance(ref, (str, bytes)):
+                ref_str = ref.decode() if isinstance(ref, bytes) else ref
+            else:
+                ref_str = str(ref)
+
+            candidates = [ref_str, f"step_{ref_str}"]
+            if ref_str.isdigit():
+                normalized = str(int(ref_str))
+                candidates.extend([normalized, f"step_{normalized}"])
+
+            seen: Set[str] = set()
+            value: Optional[str] = None
+            for key in candidates:
+                if key in seen:
+                    continue
+                seen.add(key)
+                if key in outputs:
+                    value = outputs[key]
+                    break
+
+            if value is None:
+                identifier = step.get("name") or f"step_{step_idx}"
+                raise ValueError(
+                    f"Step {identifier!r} requested input {ref!r}, which is not available"
+                )
+
+            combined.append(value)
+
+        return "\n".join(combined)
+
     def run_from(
-        idx: int, prev_output: str, prev_path: Optional[Path], curr_dir: Path
+        idx: int,
+        prev_output: str,
+        prev_path: Optional[Path],
+        curr_dir: Path,
+        outputs: Dict[str, str],
     ) -> List[Tuple[str, Optional[Path], Path]]:
         if cancel_event and cancel_event.is_set():
             raise FlowCancelled()
@@ -76,12 +145,13 @@ def _run_flow(
             step_counts[idx] += 1
 
         try:
+            step_input = resolve_step_inputs(step, idx, outputs, prev_output)
             prompt = step.get("prompt", "")
             prmpt_file = step.get("prmpt_file")
             if prmpt_file and not prompt:
                 prompt = Path(prmpt_file).read_text(encoding="utf-8")
-            if prev_output:
-                prompt = f"{prompt}\n{prev_output}".strip()
+            if step_input:
+                prompt = f"{prompt}\n{step_input}".strip()
 
             if step_type == "codex":
                 output, path = run_codex_cli(
@@ -124,7 +194,7 @@ def _run_flow(
             elif "cmd" in step:
                 completed = subprocess.run(
                     step["cmd"],
-                    input=prev_output,
+                    input=step_input,
                     capture_output=True,
                     text=True,
                     shell=True,
@@ -231,7 +301,8 @@ def _run_flow(
                         mark_failed()
                         return
                     try:
-                        branch_res = run_from(idx + 1, s, None, bdir)
+                        next_outputs = with_recorded_output(outputs, step, idx, s)
+                        branch_res = run_from(idx + 1, s, None, bdir, next_outputs)
                     except FlowCancelled:
                         cancelled = True
                         mark_failed()
@@ -251,10 +322,11 @@ def _run_flow(
 
             return results
 
-        return run_from(idx + 1, output, path, curr_dir)
+        next_outputs = with_recorded_output(outputs, step, idx, output)
+        return run_from(idx + 1, output, path, curr_dir, next_outputs)
 
     try:
-        results = run_from(0, "", None, flow_dir)
+        results = run_from(0, "", None, flow_dir, {})
     except FlowCancelled:
         mark_failed()
         failure_marker = flow_dir / "flow_failed.txt"

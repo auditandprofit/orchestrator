@@ -128,6 +128,44 @@ def test_cmd_failure_writes_stderr_file(tmp_path):
     assert "boom" in content
 
 
+def test_flow_exits_on_empty_response(tmp_path, capsys):
+    sentinel = tmp_path / "sentinel.txt"
+    base_config = [
+        {
+            "type": "cmd",
+            "cmd": "printf ''",
+            "exit_on_empty_response": True,
+            "name": "empty_step",
+        },
+        {
+            "type": "cmd",
+            "cmd": f"printf done > {shlex.quote(str(sentinel))}",
+        },
+    ]
+
+    results, failed = orchestrator._run_flow(
+        base_config,
+        [0 for _ in base_config],
+        threading.Lock(),
+        tmp_path,
+        tmp_path,
+    )
+
+    captured = capsys.readouterr()
+
+    assert not failed
+    assert not sentinel.exists()
+    assert "empty response" in captured.out.lower()
+
+    assert len(results) == 1
+    output, log_path, flow_dir = results[0]
+    assert output == ""
+    assert flow_dir == tmp_path
+    assert log_path is not None
+    assert log_path.read_text(encoding="utf-8").strip().endswith(
+        "empty_step produced an empty response."
+    )
+
 def test_codex_failure_writes_stderr_file(tmp_path, monkeypatch):
     def fake_run_codex_cli(prompt, workdir, output_dir, max_retries=3, timeout=None):
         err = subprocess.CalledProcessError(2, ["codex", "exec"], stderr="codex boom\n")

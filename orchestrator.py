@@ -266,6 +266,18 @@ def _run_flow(
             with lock:
                 step_counts[idx] -= 1
 
+        exit_on_empty_response = step.get("exit_on_empty_response") is True
+        if exit_on_empty_response and not output.strip():
+            identifier = step.get("name") or f"step_{idx}"
+            message = (
+                "Exiting flow early: "
+                f"{identifier!s} produced an empty response."
+            )
+            print(message, flush=True)
+            log_path = curr_dir / f"step_{idx}_empty_response.txt"
+            log_path.write_text(message + "\n", encoding="utf-8")
+            return [("", log_path, curr_dir)]
+
         if step.get("array"):
             try:
                 items = json.loads(output)

@@ -278,6 +278,44 @@ def _run_flow(
             log_path.write_text(message + "\n", encoding="utf-8")
             return [("", log_path, curr_dir)]
 
+        exit_on_response_contains = step.get("exit_on_response_contains")
+        matched_signal: Optional[str] = None
+        if isinstance(exit_on_response_contains, (str, bytes)):
+            normalized = (
+                exit_on_response_contains.decode()
+                if isinstance(exit_on_response_contains, bytes)
+                else exit_on_response_contains
+            )
+            if normalized:
+                matched_signal = normalized if normalized in output else None
+        elif exit_on_response_contains is not None:
+            try:
+                candidates = list(exit_on_response_contains)
+            except TypeError as exc:
+                raise ValueError(
+                    "exit_on_response_contains must be a string or iterable of strings"
+                ) from exc
+
+            for candidate in candidates:
+                if isinstance(candidate, bytes):
+                    candidate_str = candidate.decode()
+                else:
+                    candidate_str = str(candidate)
+                if candidate_str and candidate_str in output:
+                    matched_signal = candidate_str
+                    break
+
+        if matched_signal is not None:
+            identifier = step.get("name") or f"step_{idx}"
+            message = (
+                "Exiting flow early: "
+                f"{identifier!s} produced exit signal {matched_signal!r}."
+            )
+            print(message, flush=True)
+            log_path = curr_dir / f"step_{idx}_exit_signal.txt"
+            log_path.write_text(message + "\n", encoding="utf-8")
+            return [("", log_path, curr_dir)]
+
         if step.get("array"):
             try:
                 items = json.loads(output)

@@ -9,7 +9,16 @@ item requires a `type` (`"codex"` or `"openai"`) and either a `prompt` or a
 `prmpt_file` pointing to a file containing the prompt. You can optionally
 include a `name` to use in the live progress output instead of the step type.
 For OpenAI stages, set `"web_search": true` to enable the hosted web search
-preview tool when generating a response.
+preview tool when generating a response. When you expect the model to return a
+structured JSON payload, provide `response_buckets` as either a list or mapping
+of bucket names. The model should respond with a JSON object whose keys match
+those buckets (for example `{ "summary": "...", "code": "..." }`). The
+primary bucket's value is forwarded to downstream steps as the step output; use
+`primary_bucket` to explicitly choose which bucket is treated as the primary
+value. Each bucket is also written to
+`generated/.../step_{idx}_openai_bucket_{bucket}.txt` and made available for
+subsequent steps via deterministic keys such as `step_0.summary` or
+`draft.summary` (if the step was named `draft`).
 Steps may also include a `cmd` field to run an arbitrary shell
 command; the previous step's output is piped to the command's standard input and
 its standard output is passed to the next step.

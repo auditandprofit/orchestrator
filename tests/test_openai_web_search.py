@@ -119,6 +119,111 @@ def test_openai_request_options_forwarding(tmp_path, monkeypatch):
     assert call["reasoning_effort"] == "medium"
 
 
+def test_openai_response_buckets_parsing(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_api(
+        prompt: str,
+        *,
+        web_search: bool = False,
+        max_retries: int = 3,
+        model=None,
+        reasoning_effort=None,
+        service_tier=None,
+    ) -> dict:
+        call = {
+            "prompt": prompt,
+            "web_search": web_search,
+            "model": model,
+            "reasoning_effort": reasoning_effort,
+            "service_tier": service_tier,
+        }
+        calls.append(call)
+        if len(calls) == 1:
+            bucket_payload = {"summary": "Primary", "code": "print('ok')"}
+            text = json.dumps(bucket_payload)
+        else:
+            text = prompt
+        return {"output": [{"content": [{"text": text}]}]}
+
+    monkeypatch.setattr(orchestrator, "call_openai_api", fake_api)
+
+    flow_dir = tmp_path / "flow"
+    flow_dir.mkdir()
+
+    res, failed = orchestrator._run_flow(
+        [
+            {
+                "type": "openai",
+                "prompt": "Describe",
+                "response_buckets": {"summary": {}, "code": {}},
+                "primary_bucket": "summary",
+            },
+            {
+                "type": "openai",
+                "prompt": "Followup",
+                "inputs": ["step_0.summary", "step_0.code"],
+            },
+        ],
+        [0, 0],
+        threading.Lock(),
+        tmp_path,
+        flow_dir,
+    )
+
+    assert not failed
+    assert len(calls) == 2
+    assert res[0][0] == "Followup\nPrimary\nprint('ok')"
+
+    first_output_path = flow_dir / "step_0_openai.txt"
+    assert first_output_path.read_text(encoding="utf-8") == "Primary"
+
+    summary_file = flow_dir / "step_0_openai_bucket_summary.txt"
+    code_file = flow_dir / "step_0_openai_bucket_code.txt"
+    assert summary_file.read_text(encoding="utf-8") == "Primary"
+    assert code_file.read_text(encoding="utf-8") == "print('ok')"
+
+    followup_prompt = calls[1]["prompt"]
+    assert followup_prompt == "Followup\nPrimary\nprint('ok')"
+
+
+def test_openai_response_buckets_fallback(tmp_path, monkeypatch):
+    def fake_api(
+        prompt: str,
+        *,
+        web_search: bool = False,
+        max_retries: int = 3,
+        model=None,
+        reasoning_effort=None,
+        service_tier=None,
+    ) -> dict:
+        return {"output": [{"content": [{"text": "Not JSON"}]}]}
+
+    monkeypatch.setattr(orchestrator, "call_openai_api", fake_api)
+
+    flow_dir = tmp_path / "flow"
+    flow_dir.mkdir()
+
+    res, failed = orchestrator._run_flow(
+        [
+            {
+                "type": "openai",
+                "prompt": "Describe",
+                "response_buckets": ["summary", "code"],
+            }
+        ],
+        [0],
+        threading.Lock(),
+        tmp_path,
+        flow_dir,
+    )
+
+    assert not failed
+    assert res[0][0] == "Not JSON"
+    bucket_path = flow_dir / "step_0_openai_bucket_summary.txt"
+    assert not bucket_path.exists()
+
+
 class _DummyResponse:
     def __init__(self, data: dict) -> None:
         self._data = data

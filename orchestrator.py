@@ -66,14 +66,28 @@ def _run_flow(
         step: Dict[str, Any],
         step_idx: int,
         value: str,
+        *,
+        buckets: Optional[Dict[str, str]] = None,
     ) -> Dict[str, str]:
         updated = dict(outputs)
         step_name = step.get("name")
         if isinstance(step_name, str) and step_name:
             updated[step_name] = value
         idx_key = str(step_idx)
+        step_key = f"step_{idx_key}"
         updated[idx_key] = value
-        updated[f"step_{idx_key}"] = value
+        updated[step_key] = value
+
+        if buckets:
+            for bucket_name, bucket_value in buckets.items():
+                if not isinstance(bucket_value, str):
+                    bucket_value = str(bucket_value)
+                normalized_bucket = str(bucket_name)
+                if isinstance(step_name, str) and step_name:
+                    updated[f"{step_name}.{normalized_bucket}"] = bucket_value
+                updated[f"{idx_key}.{normalized_bucket}"] = bucket_value
+                updated[f"{step_key}.{normalized_bucket}"] = bucket_value
+
         return updated
 
     def resolve_step_inputs(
@@ -153,6 +167,7 @@ def _run_flow(
             if step_input:
                 prompt = f"{prompt}\n{step_input}".strip()
 
+            step_bucket_values: Optional[Dict[str, str]] = None
             if step_type == "codex":
                 output, path = run_codex_cli(
                     prompt, workdir, curr_dir, timeout=codex_timeout
@@ -175,6 +190,54 @@ def _run_flow(
                     .get("content", [{}])[0]
                     .get("text", "")
                 )
+                raw_text_output = output
+                bucket_config = step.get("response_buckets")
+                bucket_values: Optional[Dict[str, str]] = None
+                primary_bucket = step.get("primary_bucket")
+                if bucket_config:
+                    parsed_buckets: Optional[Dict[str, Any]] = None
+                    try:
+                        parsed = json.loads(raw_text_output)
+                    except json.JSONDecodeError:
+                        parsed = None
+                    if isinstance(parsed, dict):
+                        parsed_buckets = parsed
+                    if parsed_buckets:
+                        configured_names: Optional[List[str]] = None
+                        if isinstance(bucket_config, dict):
+                            configured_names = [str(name) for name in bucket_config.keys()]
+                        elif isinstance(bucket_config, (list, tuple, set)):
+                            configured_names = [str(name) for name in bucket_config]
+                        bucket_values = {}
+                        for key, value in parsed_buckets.items():
+                            key_str = str(key)
+                            if configured_names and key_str not in configured_names:
+                                continue
+                            if isinstance(value, str):
+                                bucket_values[key_str] = value
+                            else:
+                                bucket_values[key_str] = json.dumps(
+                                    value, ensure_ascii=False, default=str
+                                )
+                        if configured_names:
+                            # Ensure placeholders exist for configured buckets even if missing.
+                            for expected in configured_names:
+                                if expected not in bucket_values and parsed_buckets.get(expected) is None:
+                                    bucket_values[expected] = ""
+                        if not primary_bucket:
+                            if configured_names:
+                                for name in configured_names:
+                                    if name in bucket_values:
+                                        primary_bucket = name
+                                        break
+                            if not primary_bucket and bucket_values:
+                                primary_bucket = next(iter(bucket_values))
+                        if primary_bucket and bucket_values.get(primary_bucket) is not None:
+                            output = bucket_values[primary_bucket]
+                        else:
+                            output = raw_text_output
+                    else:
+                        bucket_values = None
                 response_path = curr_dir / f"step_{idx}_openai_response.json"
                 try:
                     response_path.write_text(
@@ -191,6 +254,18 @@ def _run_flow(
                     response_path.write_text(str(response), encoding="utf-8")
                 path = curr_dir / f"step_{idx}_openai.txt"
                 path.write_text(output, encoding="utf-8")
+                if bucket_values:
+                    step_bucket_values = bucket_values
+                    for bucket_name, bucket_value in bucket_values.items():
+                        safe_bucket = "".join(
+                            ch if ch.isalnum() or ch in ("_", "-") else "_"
+                            for ch in str(bucket_name)
+                        )
+                        bucket_path = (
+                            curr_dir
+                            / f"step_{idx}_openai_bucket_{safe_bucket or 'bucket'}.txt"
+                        )
+                        bucket_path.write_text(bucket_value, encoding="utf-8")
             elif "cmd" in step:
                 completed = subprocess.run(
                     step["cmd"],
@@ -351,7 +426,9 @@ def _run_flow(
                         mark_failed()
                         return
                     try:
-                        next_outputs = with_recorded_output(outputs, step, idx, s)
+                        next_outputs = with_recorded_output(
+                            outputs, step, idx, s, buckets=step_bucket_values
+                        )
                         branch_res = run_from(idx + 1, s, None, bdir, next_outputs)
                     except FlowCancelled:
                         cancelled = True
@@ -372,7 +449,9 @@ def _run_flow(
 
             return results
 
-        next_outputs = with_recorded_output(outputs, step, idx, output)
+        next_outputs = with_recorded_output(
+            outputs, step, idx, output, buckets=step_bucket_values
+        )
         return run_from(idx + 1, output, path, curr_dir, next_outputs)
 
     try:

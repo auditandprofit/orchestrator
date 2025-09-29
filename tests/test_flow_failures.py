@@ -350,6 +350,52 @@ def test_finished_file_records_flow_status(tmp_path, monkeypatch):
     assert lines == [f"done {success_cmd}", f"failed {fail_cmd}"]
 
 
+def test_finished_file_is_cleared_between_runs(tmp_path, monkeypatch):
+    base_config = [{"type": "cmd", "cmd": "printf hi"}]
+    flow_configs = [_copy_flow(base_config)]
+
+    run_dir = tmp_path / "run_shared"
+    first_flow_dir = run_dir / "flow_first"
+    second_flow_dir = run_dir / "flow_second"
+    mkdtemp_paths = iter(
+        [
+            str(run_dir),
+            str(first_flow_dir),
+            str(run_dir),
+            str(second_flow_dir),
+        ]
+    )
+
+    def fake_mkdtemp(prefix="", dir=None):
+        path = Path(next(mkdtemp_paths))
+        path.mkdir(parents=True, exist_ok=True)
+        return str(path)
+
+    monkeypatch.setattr(orchestrator.tempfile, "mkdtemp", fake_mkdtemp)
+    monkeypatch.setattr(orchestrator, "GENERATED_DIR", tmp_path)
+
+    orchestrator.orchestrate(
+        base_config,
+        flow_configs,
+        parallel=1,
+        workdir=tmp_path,
+        print_flow_paths=False,
+    )
+
+    finished_file = run_dir / "finished.txt"
+    assert finished_file.read_text(encoding="utf-8").splitlines() == ["done"]
+
+    orchestrator.orchestrate(
+        base_config,
+        flow_configs,
+        parallel=1,
+        workdir=tmp_path,
+        print_flow_paths=False,
+    )
+
+    assert finished_file.read_text(encoding="utf-8").splitlines() == ["done"]
+
+
 def test_cancelled_branch_flow_is_marked_failed(tmp_path, monkeypatch):
     array_script = tmp_path / "array_script.py"
     array_script.write_text(

@@ -662,8 +662,11 @@ def orchestrate(
             print("Maximum flow failures reached", flush=True)
 
     stop_event = threading.Event()
+    stdout_is_tty = sys.stdout.isatty()
+    last_display: Optional[str] = None
 
     def monitor():
+        nonlocal last_display
         while not stop_event.is_set():
             with step_lock:
                 parts = [f"{name}: {count}" for name, count in zip(step_names, step_counts)]
@@ -674,7 +677,11 @@ def orchestrate(
                 display += f" | {prog}"
             else:
                 display = prog
-            print(display, end="\r", flush=True)
+            if stdout_is_tty:
+                print(display, end="\r", flush=True)
+            elif display != last_display:
+                print(display, flush=True)
+            last_display = display
             time.sleep(0.5)
         with step_lock:
             parts = [f"{name}: {count}" for name, count in zip(step_names, step_counts)]
@@ -685,7 +692,10 @@ def orchestrate(
             display += f" | {prog}"
         else:
             display = prog
-        print(display)
+        if stdout_is_tty:
+            print(display)
+        elif display != last_display:
+            print(display, flush=True)
 
     run_dir = Path(tempfile.mkdtemp(prefix="run_", dir=GENERATED_DIR))
 

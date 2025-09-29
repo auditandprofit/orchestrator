@@ -662,9 +662,23 @@ def orchestrate(
             print("Maximum flow failures reached", flush=True)
 
     stop_event = threading.Event()
-    stdout_is_tty = sys.stdout.isatty()
     last_display: Optional[str] = None
     last_display_width = 0
+
+    def emit_progress(display: str, *, final: bool = False) -> None:
+        nonlocal last_display, last_display_width
+        if not final and display == last_display:
+            return
+
+        padding = ""
+        if last_display is not None and len(display) < last_display_width:
+            padding = " " * (last_display_width - len(display))
+
+        end = "\n" if final else "\r"
+        print(display + padding, end=end, flush=True)
+
+        last_display = display
+        last_display_width = len(display)
 
     def monitor():
         nonlocal last_display
@@ -678,17 +692,7 @@ def orchestrate(
                 display += f" | {prog}"
             else:
                 display = prog
-            if stdout_is_tty:
-                if display != last_display:
-                    padding = ""
-                    if last_display is not None and len(display) < last_display_width:
-                        padding = " " * (last_display_width - len(display))
-                    print(display + padding, end="\r", flush=True)
-                    last_display = display
-                    last_display_width = len(display)
-            elif display != last_display:
-                print(display, flush=True)
-                last_display = display
+            emit_progress(display)
             time.sleep(0.5)
         with step_lock:
             parts = [f"{name}: {count}" for name, count in zip(step_names, step_counts)]
@@ -699,16 +703,7 @@ def orchestrate(
             display += f" | {prog}"
         else:
             display = prog
-        if stdout_is_tty:
-            padding = ""
-            if last_display is not None and len(display) < last_display_width:
-                padding = " " * (last_display_width - len(display))
-            print(display + padding)
-            last_display = display
-            last_display_width = len(display)
-        elif display != last_display:
-            print(display, flush=True)
-            last_display = display
+        emit_progress(display, final=True)
         
     run_dir = Path(tempfile.mkdtemp(prefix="run_", dir=GENERATED_DIR))
 

@@ -690,7 +690,7 @@ def orchestrate(
     run_dir = Path(tempfile.mkdtemp(prefix="run_", dir=GENERATED_DIR))
 
     finished_file = run_dir / "finished.txt"
-    finished_file.touch()
+    finished_file.write_text("", encoding="utf-8")
     finished_lock = threading.Lock()
 
     def record_finished(status: str, interpolated_paths: Tuple[str, ...]) -> None:

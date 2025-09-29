@@ -664,6 +664,7 @@ def orchestrate(
     stop_event = threading.Event()
     stdout_is_tty = sys.stdout.isatty()
     last_display: Optional[str] = None
+    last_display_width = 0
 
     def monitor():
         nonlocal last_display
@@ -678,10 +679,16 @@ def orchestrate(
             else:
                 display = prog
             if stdout_is_tty:
-                print(display, end="\r", flush=True)
+                if display != last_display:
+                    padding = ""
+                    if last_display is not None and len(display) < last_display_width:
+                        padding = " " * (last_display_width - len(display))
+                    print(display + padding, end="\r", flush=True)
+                    last_display = display
+                    last_display_width = len(display)
             elif display != last_display:
                 print(display, flush=True)
-            last_display = display
+                last_display = display
             time.sleep(0.5)
         with step_lock:
             parts = [f"{name}: {count}" for name, count in zip(step_names, step_counts)]
@@ -693,10 +700,16 @@ def orchestrate(
         else:
             display = prog
         if stdout_is_tty:
-            print(display)
+            padding = ""
+            if last_display is not None and len(display) < last_display_width:
+                padding = " " * (last_display_width - len(display))
+            print(display + padding)
+            last_display = display
+            last_display_width = len(display)
         elif display != last_display:
             print(display, flush=True)
-
+            last_display = display
+        
     run_dir = Path(tempfile.mkdtemp(prefix="run_", dir=GENERATED_DIR))
 
     finished_file = run_dir / "finished.txt"

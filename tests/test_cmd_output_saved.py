@@ -67,3 +67,23 @@ def test_cmd_inputs_accept_step_indexes(tmp_path):
 
     assert not failed
     assert results[0][0] == "bar\nfoo"
+
+
+def test_cmd_allows_stdin_file(tmp_path):
+    stdin_source = tmp_path / "input.txt"
+    stdin_source.write_text("hello from file", encoding="utf-8")
+
+    config = [{"type": "cmd", "cmd": "cat", "stdin_file": str(stdin_source)}]
+
+    flow_dir = tmp_path / "flow"
+    flow_dir.mkdir()
+
+    results, failed = orchestrator._run_flow(
+        config, [0], threading.Lock(), tmp_path, flow_dir
+    )
+
+    assert not failed
+    assert results[0][0] == "hello from file"
+    output_path = flow_dir / "step_0_cmd.txt"
+    assert output_path.exists()
+    assert output_path.read_text(encoding="utf-8") == "hello from file"

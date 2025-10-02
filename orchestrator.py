@@ -267,6 +267,14 @@ def _run_flow(
                         )
                         bucket_path.write_text(bucket_value, encoding="utf-8")
             elif "cmd" in step:
+                stdin_file = step.get("stdin_file")
+                if stdin_file:
+                    stdin_path = Path(stdin_file)
+                    stdin_content = stdin_path.read_text(encoding="utf-8")
+                    if step_input:
+                        step_input = "\n".join([step_input, stdin_content])
+                    else:
+                        step_input = stdin_content
                 completed = subprocess.run(
                     step["cmd"],
                     input=step_input,

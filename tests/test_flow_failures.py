@@ -90,6 +90,50 @@ def test_orchestrate_groups_flows_in_run_directory(tmp_path, monkeypatch):
         assert flow_dir.name.startswith("flow_")
 
 
+def test_orchestrate_honors_max_flows(tmp_path, monkeypatch):
+    base_config = [{"type": "cmd", "cmd": "printf hi"}]
+    flow_configs = [_copy_flow(base_config) for _ in range(5)]
+
+    monkeypatch.setattr(orchestrator, "GENERATED_DIR", tmp_path)
+
+    results = orchestrator.orchestrate(
+        base_config,
+        flow_configs,
+        parallel=2,
+        workdir=tmp_path,
+        print_flow_paths=False,
+        max_flows=2,
+    )
+
+    assert len(results) == 2
+
+    flow_dirs = {res[2] for res in results}
+    assert len(flow_dirs) == 2
+
+    run_dirs = {flow_dir.parent for flow_dir in flow_dirs}
+    assert len(run_dirs) == 1
+    run_dir = run_dirs.pop()
+
+    executed_flow_dirs = [
+        path for path in run_dir.iterdir() if path.is_dir() and path.name.startswith("flow_")
+    ]
+    assert len(executed_flow_dirs) == 2
+
+
+def test_orchestrate_rejects_negative_max_flows(tmp_path):
+    base_config = [{"type": "cmd", "cmd": "printf hi"}]
+    flow_configs = [_copy_flow(base_config)]
+
+    with pytest.raises(ValueError):
+        orchestrator.orchestrate(
+            base_config,
+            flow_configs,
+            parallel=1,
+            workdir=tmp_path,
+            max_flows=-1,
+        )
+
+
 def test_cmd_failure_forwards_stderr(tmp_path, capsys):
     script = tmp_path / "failing_script.py"
     script.write_text(

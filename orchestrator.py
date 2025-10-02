@@ -484,60 +484,98 @@ def _generate_flow_configs(
 
     Placeholders in prompts must be wrapped with triple braces, e.g. ``{{{name}}}``.
     When ``append_filepath`` is ``True``, the path to each interpolated file is
-    appended after its contents in the prompt.
+    appended after its contents in the prompt. Steps may also reference manifests
+    of newline-delimited file paths via ``stdin_file``; when present, a flow is
+    emitted for every combination of manifest entries and placeholder values.
     """
-
-    if not key_files:
-        return [FlowConfig((dict(step) for step in base_config))]
 
     loaded: Dict[str, List[Tuple[str, str]]] = {}
 
-    for key, file_path in key_files.items():
-        with file_path.open("r", encoding="utf-8") as f:
-            paths = [line.strip() for line in f.readlines() if line.strip()]
-        entries: List[Tuple[str, str]] = []
-        for p in paths:
-            text = Path(p).read_text(encoding="utf-8")
-            if append_filepath:
-                text = text.rstrip("\n") + f"\n{p}"
-            entries.append((p, text))
-        loaded[key] = entries
+    if key_files:
+        for key, file_path in key_files.items():
+            with file_path.open("r", encoding="utf-8") as f:
+                paths = [line.strip() for line in f.readlines() if line.strip()]
+            entries: List[Tuple[str, str]] = []
+            for p in paths:
+                text = Path(p).read_text(encoding="utf-8")
+                if append_filepath:
+                    text = text.rstrip("\n") + f"\n{p}"
+                entries.append((p, text))
+            loaded[key] = entries
 
     keys = list(loaded.keys())
-    values_product = itertools.product(*(loaded[k] for k in keys))
+    key_values_product: Iterable[Tuple[Tuple[str, str], ...]]
+    if keys:
+        key_values_product = list(itertools.product(*(loaded[k] for k in keys)))
+    else:
+        key_values_product = [tuple()]
+
+    manifest_steps: List[Tuple[int, List[str]]] = []
+    for idx, step in enumerate(base_config):
+        stdin_file = step.get("stdin_file")
+        if not stdin_file:
+            continue
+        stdin_path = Path(stdin_file)
+        if not stdin_path.exists():
+            continue
+        manifest_candidates = [
+            line.strip()
+            for line in stdin_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        if not manifest_candidates:
+            continue
+        if all(Path(candidate).exists() for candidate in manifest_candidates):
+            manifest_steps.append((idx, manifest_candidates))
+
+    manifest_indexes = {idx: pos for pos, (idx, _) in enumerate(manifest_steps)}
+    manifest_values_product: Iterable[Tuple[str, ...]]
+    if manifest_steps:
+        manifest_values_product = list(
+            itertools.product(*(paths for _, paths in manifest_steps))
+        )
+    else:
+        manifest_values_product = [tuple()]
+
     flow_configs: List[FlowConfig] = []
 
-    for combo in values_product:
+    for key_combo in key_values_product:
         mapping: Dict[str, str] = {}
         combo_paths: List[str] = []
-        for key, (path_str, value) in zip(keys, combo):
+        for key, (path_str, value) in zip(keys, key_combo):
             mapping[key] = value
             combo_paths.append(path_str)
 
-        flow: List[Dict[str, Any]] = []
-        for step in base_config:
-            new_step = dict(step)
-            prompt = new_step.get("prompt", "")
-            cmd_str = new_step.get("cmd")
-            prmpt_file = new_step.get("prmpt_file")
-            for key, value in mapping.items():
-                placeholder = "{{{" + key + "}}}"
-                prompt = prompt.replace(placeholder, value)
-                if cmd_str is not None:
-                    cmd_str = cmd_str.replace(placeholder, value)
-                if prmpt_file is not None:
-                    prmpt_file = prmpt_file.replace(placeholder, value)
-            if prmpt_file is not None:
-                prompt = Path(prmpt_file).read_text(encoding="utf-8")
+        for manifest_combo in manifest_values_product:
+            manifest_paths = list(manifest_combo)
+            flow: List[Dict[str, Any]] = []
+            for step_idx, step in enumerate(base_config):
+                new_step = dict(step)
+                prompt = new_step.get("prompt", "")
+                cmd_str = new_step.get("cmd")
+                prmpt_file = new_step.get("prmpt_file")
                 for key, value in mapping.items():
                     placeholder = "{{{" + key + "}}}"
                     prompt = prompt.replace(placeholder, value)
-                new_step["prmpt_file"] = prmpt_file
-            new_step["prompt"] = prompt
-            if cmd_str is not None:
-                new_step["cmd"] = cmd_str
-            flow.append(new_step)
-        flow_configs.append(FlowConfig(flow, combo_paths))
+                    if cmd_str is not None:
+                        cmd_str = cmd_str.replace(placeholder, value)
+                    if prmpt_file is not None:
+                        prmpt_file = prmpt_file.replace(placeholder, value)
+                if prmpt_file is not None:
+                    prompt = Path(prmpt_file).read_text(encoding="utf-8")
+                    for key, value in mapping.items():
+                        placeholder = "{{{" + key + "}}}"
+                        prompt = prompt.replace(placeholder, value)
+                    new_step["prmpt_file"] = prmpt_file
+                manifest_pos = manifest_indexes.get(step_idx)
+                if manifest_pos is not None:
+                    new_step["stdin_file"] = manifest_paths[manifest_pos]
+                new_step["prompt"] = prompt
+                if cmd_str is not None:
+                    new_step["cmd"] = cmd_str
+                flow.append(new_step)
+            interpolated_paths = combo_paths + manifest_paths
+            flow_configs.append(FlowConfig(flow, interpolated_paths))
 
     return flow_configs
 

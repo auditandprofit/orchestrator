@@ -590,6 +590,7 @@ def orchestrate(
     print_flow_paths: bool = True,
     list_codex_final_paths: bool = False,
     halt_on_max_failures: bool = True,
+    max_flows: Optional[int] = None,
     openai_request_options: Optional[Dict[str, Optional[str]]] = None,
 ) -> List[Tuple[str, Optional[Path], Path]]:
     """Execute multiple flows with a concurrency cap while logging active counts.
@@ -619,6 +620,9 @@ def orchestrate(
             ``max_flow_failures`` is reached. When ``False``, the orchestrator
             continues running remaining flows and returns all results even if
             the failure threshold is exceeded.
+        max_flows: Optional hard cap on the number of flows to execute. When
+            provided, the orchestrator runs at most this many flows even if
+            additional flow configurations are available.
         openai_request_options: Optional overrides for OpenAI steps, such as
             ``model``, ``service_tier``, and ``reasoning_effort``. When not
             provided, defaults built into :func:`call_openai_api` are used.
@@ -633,6 +637,9 @@ def orchestrate(
     if max_flow_failures < 1:
         raise ValueError("max_flow_failures must be at least 1")
 
+    if max_flows is not None and max_flows < 0:
+        raise ValueError("max_flows must be non-negative")
+
     step_names = [step.get("name") or step.get("type", "") for step in base_config]
     final_step_is_codex = bool(base_config) and base_config[-1].get("type") == "codex"
     step_counts = [0] * len(base_config)
@@ -640,7 +647,7 @@ def orchestrate(
     progress_lock = threading.Lock()
     results: List[Tuple[str, Optional[Path], Path]] = []
     finished = 0
-    total = len(flow_configs)
+    total = len(flow_configs) if max_flows is None else min(len(flow_configs), max_flows)
     failed_flows = 0
     cancel_event = threading.Event()
     cancel_message_printed = False
@@ -768,7 +775,9 @@ def orchestrate(
     monitor_thread = threading.Thread(target=monitor)
     monitor_thread.start()
 
-    for flow_conf in flow_configs:
+    for idx, flow_conf in enumerate(flow_configs):
+        if max_flows is not None and idx >= max_flows:
+            break
         if cancel_event.is_set():
             break
         flow_dir = Path(tempfile.mkdtemp(prefix="flow_", dir=run_dir))
@@ -830,6 +839,12 @@ if __name__ == "__main__":
         type=int,
         default=1,
         help="Maximum number of flows to run concurrently",
+    )
+    parser.add_argument(
+        "--max-flows",
+        type=int,
+        default=None,
+        help="Hard cap on the total number of flows to execute",
     )
     parser.add_argument(
         "--key",
@@ -939,6 +954,7 @@ if __name__ == "__main__":
             print_flow_paths=not args.hide_flow_paths,
             list_codex_final_paths=args.list_final_message_paths,
             halt_on_max_failures=not args.ignore_max_failures,
+            max_flows=args.max_flows,
             openai_request_options=openai_request_options,
         )
     except MaxFlowFailuresExceeded:
